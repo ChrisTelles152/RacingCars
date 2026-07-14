@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Train a population of neural-net drivers with a genetic algorithm.
+
+The training loop, one generation at a time:
+
+  1. draw K FRESH random tracks (new seeds every generation — there is never
+     a track to memorize; generalizing IS the objective)
+  2. score every genome on all K tracks; fitness = mean lap fraction
+  3. curriculum: when the *median* car handles the current difficulty,
+     make the tracks narrower and twistier
+  4. every N generations: test the champion on 10 fixed held-out validation
+     tracks it never trains on — the honest generalization score — and
+     checkpoint it whenever that score improves
+  5. breed the next generation (elitism / tournaments / crossover / mutation)
+
+Reproducibility: one master seed spawns independent RNG streams for
+population init, mutation, and track sampling (numpy SeedSequence), and the
+simulation itself is RNG-free — the same command reproduces the same run.
+
+Usage:
+  python3 train.py --run-name demo --generations 300 --seed 42
+  python3 train.py --run-name onetrack --fixed-track-seed 7   # sanity mode
+Outputs in runs/<run-name>/: config.json, metrics.csv,
+  champion_best_val.npz (best validation score), champion_latest.npz
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import os
+import time
+
+import numpy as np
+
+from racing.brain import init_population, make_spec
+from racing.config import Config
+from racing.evolution import next_generation, sigma_at
+from racing.persistence import MetricsLogger, save_genome
+from racing.simulation import run_episode
+from racing.track import Track, make_track
+
+
+def evaluate(genomes: np.ndarray, tracks: list[Track], config: Config):
+    """Mean fitness over tracks (P,), plus stats for logging."""
+    results = [run_episode(genomes, t, config) for t in tracks]
+    fitness = np.mean([r.fitness for r in results], axis=0)
+    steps = sum(r.steps_run for r in results)
+    alive_rate = float(np.mean([(r.steps_alive == r.steps_run).mean() for r in results]))
+    crash_rate = float(np.mean([r.crashed.mean() for r in results]))
+    best_laps = float(np.max([r.laps.max() for r in results]))
+    return fitness.astype(np.float32), steps, alive_rate, crash_rate, best_laps
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--run-name", default="run")
+    ap.add_argument("--generations", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--population", type=int, default=None)
+    ap.add_argument("--tracks-per-gen", type=int, default=None)
+    ap.add_argument("--start-difficulty", type=float, default=0.0)
+    ap.add_argument("--fixed-track-seed", type=int, default=None,
+                    help="train on ONE fixed track, no curriculum/validation "
+                         "(the 'can evolution learn at all?' sanity mode)")
+    ap.add_argument("--fixed-difficulty", type=float, default=0.3,
+                    help="difficulty used with --fixed-track-seed")
+    args = ap.parse_args()
+
+    config = Config()
+    if args.seed is not None:
+        config = dataclasses.replace(config, seed=args.seed)
+    if args.population is not None:
+        config = dataclasses.replace(
+            config, evo=dataclasses.replace(config.evo, population=args.population))
+    if args.tracks_per_gen is not None:
+        config = dataclasses.replace(
+            config, train=dataclasses.replace(config.train,
+                                              tracks_per_generation=args.tracks_per_gen))
+    if args.generations is not None:
+        config = dataclasses.replace(
+            config, train=dataclasses.replace(config.train, generations=args.generations))
+    tr = config.train
+
+    run_dir = os.path.join("runs", args.run_name)
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "config.json"), "w") as f:
+        f.write(config.to_json())
+    metrics = MetricsLogger(os.path.join(run_dir, "metrics.csv"))
+
+    # Independent RNG streams from one master seed: results stay reproducible
+    # and changing e.g. mutation draws can never silently reshuffle the tracks.
+    init_ss, mut_ss, track_ss = np.random.SeedSequence(config.seed).spawn(3)
+    init_rng = np.random.default_rng(init_ss)
+    mut_rng = np.random.default_rng(mut_ss)
+    track_rng = np.random.default_rng(track_ss)
+
+    spec = make_spec(config.brain, config.sensor)
+    genomes = init_population(config.evo.population, spec, init_rng)
+    print(f"population {config.evo.population} x genome {spec.genome_size} "
+          f"({spec.n_in}-{spec.hidden}-{spec.n_out} MLP)")
+
+    fixed_mode = args.fixed_track_seed is not None
+    fixed_track = None
+    val_tracks: list[Track] = []
+    if fixed_mode:
+        fixed_track = make_track(args.fixed_track_seed, args.fixed_difficulty,
+                                 config.track, config.car.car_radius)
+        print(f"fixed-track mode: seed {args.fixed_track_seed} "
+              f"difficulty {args.fixed_difficulty}")
+    else:
+        val_tracks = [make_track(s, d, config.track, config.car.car_radius)
+                      for s, d in zip(tr.val_seeds, tr.val_difficulties)]
+        print(f"validation set: {len(val_tracks)} held-out tracks "
+              f"(difficulties {min(tr.val_difficulties)}-{max(tr.val_difficulties)})")
+
+    difficulty = args.start_difficulty
+    streak = 0
+    gens_since_promote = 0
+    best_val = -np.inf
+
+    for gen in range(tr.generations):
+        t0 = time.perf_counter()
+        sigma = sigma_at(gen, config.evo)
+
+        if fixed_mode:
+            tracks = [fixed_track]
+            seeds = [args.fixed_track_seed]
+        else:
+            # Fresh seeds each generation, from a range disjoint from the
+            # validation seeds by construction.
+            seeds = [int(s) for s in
+                     track_rng.integers(1 << 20, 1 << 31, tr.tracks_per_generation)]
+            lo = max(0.0, difficulty - tr.curriculum_band)
+            diffs = track_rng.uniform(lo, max(difficulty, 1e-9), tr.tracks_per_generation)
+            tracks = [make_track(s, d, config.track, config.car.car_radius)
+                      for s, d in zip(seeds, diffs)]
+
+        fitness, steps, alive_rate, crash_rate, best_laps = evaluate(genomes, tracks, config)
+        median_fit = float(np.median(fitness))
+
+        # Curriculum: promote when the median car is competent for a streak
+        # of generations; ease off if the population is stuck.
+        if not fixed_mode:
+            if median_fit >= tr.promote_threshold:
+                streak += 1
+            else:
+                streak = 0
+            gens_since_promote += 1
+            if streak >= tr.promote_streak and difficulty < 1.0:
+                difficulty = min(1.0, difficulty + tr.promote_step)
+                streak = 0
+                gens_since_promote = 0
+                print(f"  >> curriculum promoted to difficulty {difficulty:.2f}")
+            elif gens_since_promote >= tr.demote_after and difficulty > 0.0:
+                difficulty = max(0.0, difficulty - tr.demote_step)
+                gens_since_promote = 0
+                print(f"  << population stuck, easing to difficulty {difficulty:.2f}")
+
+        # Held-out validation of the current champion.
+        val_mean = val_min = val_gap = ""
+        champ_idx = int(fitness.argmax())
+        if not fixed_mode and (gen % tr.val_every == 0 or gen == tr.generations - 1):
+            champ = genomes[champ_idx][None, :]
+            val_fits = np.array([run_episode(champ, vt, config).fitness[0]
+                                 for vt in val_tracks])
+            val_mean = float(val_fits.mean())
+            val_min = float(val_fits.min())
+            val_gap = float(fitness[champ_idx] - val_mean)
+            meta = {"generation": gen, "train_fitness": float(fitness[champ_idx]),
+                    "val_mean": val_mean, "val_min": val_min, "difficulty": difficulty}
+            save_genome(os.path.join(run_dir, "champion_latest.npz"),
+                        genomes[champ_idx], config, meta)
+            if val_mean > best_val:
+                best_val = val_mean
+                save_genome(os.path.join(run_dir, "champion_best_val.npz"),
+                            genomes[champ_idx], config, meta)
+            print(f"  == validation: mean {val_mean:.3f} min {val_min:.3f} laps "
+                  f"(best so far {best_val:.3f})")
+        elif fixed_mode and gen % 10 == 0:
+            save_genome(os.path.join(run_dir, "champion_latest.npz"),
+                        genomes[champ_idx], config,
+                        {"generation": gen, "train_fitness": float(fitness[champ_idx])})
+
+        wall = time.perf_counter() - t0
+        metrics.log(
+            gen=gen, difficulty=round(difficulty, 3),
+            track_seeds=";".join(map(str, seeds)), sigma=round(sigma, 4),
+            best_fit=round(float(fitness.max()), 4),
+            mean_fit=round(float(fitness.mean()), 4),
+            median_fit=round(median_fit, 4),
+            p90_fit=round(float(np.percentile(fitness, 90)), 4),
+            best_laps=round(best_laps, 3),
+            alive_rate_end=round(alive_rate, 3), crash_rate=round(crash_rate, 3),
+            steps_simulated=steps, wall_s=round(wall, 2),
+            val_mean=val_mean and round(val_mean, 4),
+            val_min=val_min and round(val_min, 4),
+            val_gap=val_gap and round(val_gap, 4),
+        )
+        print(f"gen {gen:4d}  d={difficulty:.2f}  best {fitness.max():6.3f}  "
+              f"median {median_fit:6.3f}  crash {crash_rate*100:3.0f}%  "
+              f"sigma {sigma:.3f}  {wall:5.1f}s")
+
+        genomes = next_generation(genomes, fitness, config.evo, mut_rng, sigma)
+
+    print(f"done. outputs in {run_dir}/")
+    if not fixed_mode:
+        print(f"watch the champion on an unseen track:\n"
+              f"  python3 watch.py --champion {run_dir}/champion_best_val.npz")
+
+
+if __name__ == "__main__":
+    main()

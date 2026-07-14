@@ -80,14 +80,22 @@ def build_obs(state: SimState, track: Track, config: Config,
     return np.concatenate([rays, speed_n], axis=1)
 
 
-def step(state: SimState, track: Track, genomes: np.ndarray, spec: BrainSpec,
-         config: Config, rel_angles: np.ndarray, sample_ts: np.ndarray) -> None:
-    """Advance the whole population one timestep: sense -> think -> move -> score."""
+def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainSpec,
+         config: Config, rel_angles: np.ndarray, sample_ts: np.ndarray,
+         controls: np.ndarray | None = None) -> None:
+    """Advance the whole population one timestep: sense -> think -> move -> score.
+
+    Normally the brains produce the controls; pass `controls` explicitly to
+    drive the cars from outside (human keyboard input in play.py) while
+    keeping every other rule — physics, collision, progress, stalls —
+    identical to what the evolved cars experience.
+    """
     sim = config.sim
     g = track.occ_coll.shape[0]
 
     obs = build_obs(state, track, config, rel_angles, sample_ts)
-    controls = forward(genomes, obs, spec)
+    if controls is None:
+        controls = forward(genomes, obs, spec)
     step_cars(state.pos, state.heading, state.speed, state.alive, controls, config.car)
 
     # Collision: one gather in the configuration-space grid.
