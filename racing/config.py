@@ -154,11 +154,17 @@ class TrainConfig:
     promote_step: float = 0.1
     demote_after: int = 20          # consecutive below-bar gens -> ease off
     demote_step: float = 0.05
-    # Held-out validation: fixed seeds NEVER used in training. The train-vs-
-    # validation gap is the honest overfitting signal.
+    # Held-out validation: fixed seeds NEVER used in training. The ladder is
+    # 50 tracks, weighted toward the hard end, because champion selection
+    # keys on the WORST validation track: with only 2 hard tracks (the
+    # original ladder) a genome that crashes on half of all hard tracks
+    # still aces both with probability 25% — measured to lock lucky fragile
+    # champions into the checkpoint ratchet in 3 of 4 runs. With 15 hard
+    # tracks that pass probability is ~0.003%.
     val_every: int = 10
-    val_seeds: tuple[int, ...] = tuple(range(10_000, 10_010))
-    val_difficulties: tuple[float, ...] = (0.3, 0.3, 0.5, 0.5, 0.7, 0.7, 0.9, 0.9, 1.0, 1.0)
+    val_seeds: tuple[int, ...] = tuple(range(10_000, 10_050))
+    val_difficulties: tuple[float, ...] = (
+        (0.3,) * 5 + (0.5,) * 5 + (0.7,) * 10 + (0.9,) * 15 + (1.0,) * 15)
     # Robust champion selection: argmax over K noisy tracks is a lottery (the
     # winner's curse), so each validation round races the top-N train genomes
     # on the validation set and keeps the one with the best WORST-case score.

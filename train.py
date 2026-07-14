@@ -253,6 +253,11 @@ def main() -> None:
                     "val_mean": val_mean, "val_min": val_min, "difficulty": difficulty}
             save_genome(os.path.join(run_dir, "champion_latest.npz"),
                         genomes[champ_idx], config, meta)
+            # Archive every round's pick: enables offline re-selection with a
+            # different criterion or suite WITHOUT retraining (selection
+            # experiments are cheap; training runs are not).
+            save_genome(os.path.join(run_dir, "champions", f"gen_{gen:04d}.npz"),
+                        genomes[champ_idx], config, meta)
             if champion_key(val_min, val_mean) > best_val:
                 best_val = champion_key(val_min, val_mean)
                 best_val_stats = (val_min, val_mean)
