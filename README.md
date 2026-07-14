@@ -153,8 +153,10 @@ and comparing `plot_curves.py` outputs is the whole experiment:
 - **Mutation schedule**: freeze `sigma_decay=1.0` — does it stop improving?
 - **Blind the car**: 3 rays instead of 7. Add rear rays. Widen the fan.
 - **Bigger brain**: `hidden=64`. Better driver, or just slower evolution?
-- **No curriculum**: `--start-difficulty 1.0`. Can evolution bootstrap on
-  hard tracks directly, or does it need the ramp?
+- **No curriculum**: `--start-difficulty 1.0 --pin-difficulty`. Can evolution
+  bootstrap on hard tracks directly, or does it need the ramp?
+  (`--pin-difficulty` freezes the difficulty; without it the adaptive
+  schedule would quietly ease the tracks when the population struggles.)
 - **Sanity mode**: `train.py --fixed-track-seed 7` trains on ONE track —
   watch it overfit gloriously, then check the champion on any other seed.
 

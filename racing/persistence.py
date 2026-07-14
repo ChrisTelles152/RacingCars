@@ -28,7 +28,12 @@ def save_genome(path: str, genome: np.ndarray, config: Config,
     }
     for key, value in (meta or {}).items():
         payload[f"meta_{key}"] = np.array(value)
-    np.savez(path, **payload)
+    # Write-then-rename so an interrupt (Ctrl-C mid-save) can never leave a
+    # truncated checkpoint: os.replace is atomic, so the file at `path` is
+    # always either the complete old champion or the complete new one.
+    tmp = path + ".tmp.npz"
+    np.savez(tmp, **payload)
+    os.replace(tmp, path)
 
 
 def load_genome(path: str) -> tuple[np.ndarray, Config, dict[str, Any]]:

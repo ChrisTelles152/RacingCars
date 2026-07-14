@@ -173,11 +173,33 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
     """Generate a valid track for (seed, difficulty). Deterministic.
 
     Rejection sampling: invalid candidates re-roll from a derived seed. If a
-    difficulty produces no valid track after cfg.max_attempts (essentially
-    only possible with extreme configs), we back off difficulty by 0.1 —
-    deterministically — rather than crash a training run.
+    difficulty produces no valid track after cfg.max_attempts, we back off
+    difficulty by 0.1 (with a fresh seed offset per level, so retries are not
+    identical) rather than crash a training run — and the returned
+    Track.difficulty reports the difficulty actually used, so callers can log
+    the truth. If even difficulty 0 fails, the config is unsatisfiable and we
+    raise instead of retrying forever.
     """
-    difficulty = float(np.clip(difficulty, 0.0, 1.0))
+    requested = float(np.clip(difficulty, 0.0, 1.0))
+    for backoff in range(12):
+        d = max(0.0, requested - 0.1 * backoff)
+        track = _generate(seed + 999_983 * backoff, d, cfg, car_radius)
+        if track is not None:
+            track.seed = seed
+            return track
+        print(f"[track] seed={seed} d={d:.2f}: no valid track in "
+              f"{cfg.max_attempts} attempts, backing off difficulty")
+        if d == 0.0:
+            break
+    raise RuntimeError(
+        f"track generation failed for seed {seed} even at difficulty 0 — "
+        f"the TrackConfig constraints are unsatisfiable (base_radius, "
+        f"half_width_easy, min_radius_margin, world_size)")
+
+
+def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
+              car_radius: float) -> Track | None:
+    """One rejection-sampling pass at a fixed difficulty; None if all fail."""
     half_width = _lerp(cfg.half_width_easy, cfg.half_width_hard, difficulty)
     n_control = round(_lerp(cfg.control_points_easy, cfg.control_points_hard, difficulty))
     jitter = _lerp(cfg.radial_jitter_easy, cfg.radial_jitter_hard, difficulty)
@@ -185,7 +207,7 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
     margin = half_width + 2.0
 
     for attempt in range(cfg.max_attempts):
-        rng = np.random.default_rng(seed + 100_003 * attempt)
+        rng = np.random.default_rng(rng_seed + 100_003 * attempt)
 
         # 1. Random control points around a circle.
         spacing = 2.0 * np.pi / n_control
@@ -216,7 +238,7 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
                                        half_width - car_radius, cfg.world_size)
 
         return Track(
-            seed=seed, difficulty=difficulty, half_width=float(half_width),
+            seed=rng_seed, difficulty=difficulty, half_width=float(half_width),
             centerline=centerline.astype(np.float32),
             tangents=tangents.astype(np.float32),
             normals=normals.astype(np.float32),
@@ -226,10 +248,7 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
             start_heading=float(np.arctan2(tangents[0, 1], tangents[0, 0])),
         )
 
-    # Deterministic fallback — only reachable with pathological configs.
-    print(f"[track] seed={seed} d={difficulty:.2f}: no valid track in "
-          f"{cfg.max_attempts} attempts, backing off difficulty")
-    return make_track(seed, difficulty - 0.1, cfg, car_radius)
+    return None  # every candidate rejected; make_track handles the backoff
 
 
 def project_progress(

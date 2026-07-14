@@ -31,9 +31,16 @@ from racing.track import make_track
 from viewer import Viewer
 
 
+def nonneg_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--track-seed", type=int, default=7)
+    ap.add_argument("--track-seed", type=nonneg_int, default=7)
     ap.add_argument("--difficulty", type=float, default=0.3)
     args = ap.parse_args()
 

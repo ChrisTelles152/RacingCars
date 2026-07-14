@@ -52,15 +52,25 @@ def evaluate(genomes: np.ndarray, tracks: list[Track], config: Config):
     return fitness.astype(np.float32), steps, alive_rate, crash_rate, best_laps
 
 
+def nonneg_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run-name", default="run")
     ap.add_argument("--generations", type=int, default=None)
-    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--seed", type=nonneg_int, default=None)
     ap.add_argument("--population", type=int, default=None)
     ap.add_argument("--tracks-per-gen", type=int, default=None)
     ap.add_argument("--start-difficulty", type=float, default=0.0)
-    ap.add_argument("--fixed-track-seed", type=int, default=None,
+    ap.add_argument("--pin-difficulty", action="store_true",
+                    help="freeze difficulty at --start-difficulty (disables "
+                         "the adaptive curriculum — for controlled experiments)")
+    ap.add_argument("--fixed-track-seed", type=nonneg_int, default=None,
                     help="train on ONE fixed track, no curriculum/validation "
                          "(the 'can evolution learn at all?' sanity mode)")
     ap.add_argument("--fixed-difficulty", type=float, default=0.3,
@@ -81,6 +91,9 @@ def main() -> None:
         config = dataclasses.replace(
             config, train=dataclasses.replace(config.train, generations=args.generations))
     tr = config.train
+    if config.evo.population <= config.evo.elite:
+        ap.error(f"population ({config.evo.population}) must exceed the elite "
+                 f"count ({config.evo.elite}) or there is no room for children")
 
     run_dir = os.path.join("runs", args.run_name)
     os.makedirs(run_dir, exist_ok=True)
@@ -96,7 +109,8 @@ def main() -> None:
     track_rng = np.random.default_rng(track_ss)
 
     spec = make_spec(config.brain, config.sensor)
-    genomes = init_population(config.evo.population, spec, init_rng)
+    genomes = init_population(config.evo.population, spec, init_rng,
+                              scale=config.evo.init_scale)
     print(f"population {config.evo.population} x genome {spec.genome_size} "
           f"({spec.n_in}-{spec.hidden}-{spec.n_out} MLP)")
 
@@ -111,12 +125,16 @@ def main() -> None:
     else:
         val_tracks = [make_track(s, d, config.track, config.car.car_radius)
                       for s, d in zip(tr.val_seeds, tr.val_difficulties)]
+        for vt, want in zip(val_tracks, tr.val_difficulties):
+            if abs(vt.difficulty - want) > 1e-9:  # backoff would skew the metric
+                print(f"WARNING: validation seed {vt.seed} generated at "
+                      f"difficulty {vt.difficulty:.2f} instead of {want:.2f}")
         print(f"validation set: {len(val_tracks)} held-out tracks "
               f"(difficulties {min(tr.val_difficulties)}-{max(tr.val_difficulties)})")
 
     difficulty = args.start_difficulty
-    streak = 0
-    gens_since_promote = 0
+    streak = 0          # consecutive generations with a competent median
+    gens_below_bar = 0  # consecutive generations below the promote threshold
     best_val = -np.inf
 
     for gen in range(tr.generations):
@@ -140,21 +158,24 @@ def main() -> None:
         median_fit = float(np.median(fitness))
 
         # Curriculum: promote when the median car is competent for a streak
-        # of generations; ease off if the population is stuck.
-        if not fixed_mode:
+        # of generations; ease off only when it has been BELOW the bar for a
+        # long stretch. (Demotion keys on incompetence, not on "no promotion
+        # happened" — a thriving population at max difficulty must not be
+        # demoted just because there is nothing left to promote to.)
+        if not fixed_mode and not args.pin_difficulty:
             if median_fit >= tr.promote_threshold:
                 streak += 1
+                gens_below_bar = 0
             else:
                 streak = 0
-            gens_since_promote += 1
+                gens_below_bar += 1
             if streak >= tr.promote_streak and difficulty < 1.0:
                 difficulty = min(1.0, difficulty + tr.promote_step)
                 streak = 0
-                gens_since_promote = 0
                 print(f"  >> curriculum promoted to difficulty {difficulty:.2f}")
-            elif gens_since_promote >= tr.demote_after and difficulty > 0.0:
+            elif gens_below_bar >= tr.demote_after and difficulty > 0.0:
                 difficulty = max(0.0, difficulty - tr.demote_step)
-                gens_since_promote = 0
+                gens_below_bar = 0
                 print(f"  << population stuck, easing to difficulty {difficulty:.2f}")
 
         # Held-out validation of the current champion.
@@ -177,14 +198,18 @@ def main() -> None:
                             genomes[champ_idx], config, meta)
             print(f"  == validation: mean {val_mean:.3f} min {val_min:.3f} laps "
                   f"(best so far {best_val:.3f})")
-        elif fixed_mode and gen % 10 == 0:
+        elif fixed_mode and (gen % 10 == 0 or gen == tr.generations - 1):
             save_genome(os.path.join(run_dir, "champion_latest.npz"),
                         genomes[champ_idx], config,
                         {"generation": gen, "train_fitness": float(fitness[champ_idx])})
 
         wall = time.perf_counter() - t0
+        # Log the difficulty the tracks were ACTUALLY generated at (the
+        # generator backs off when a seed can't satisfy the validity checks),
+        # not merely what the curriculum requested — metrics stay honest.
+        realized_d = float(np.mean([t.difficulty for t in tracks]))
         metrics.log(
-            gen=gen, difficulty=round(difficulty, 3),
+            gen=gen, difficulty=round(realized_d, 3),
             track_seeds=";".join(map(str, seeds)), sigma=round(sigma, 4),
             best_fit=round(float(fitness.max()), 4),
             mean_fit=round(float(fitness.mean()), 4),

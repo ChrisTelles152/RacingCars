@@ -29,10 +29,17 @@ from racing.track import make_track
 from viewer import Viewer
 
 
+def nonneg_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--champion", required=True, help=".npz checkpoint from train.py")
-    ap.add_argument("--track-seed", type=int, default=None,
+    ap.add_argument("--track-seed", type=nonneg_int, default=None,
                     help="fixed track seed (default: fresh random each time)")
     ap.add_argument("--difficulty", type=float, default=0.5)
     ap.add_argument("--fps", type=int, default=30)
@@ -57,8 +64,10 @@ def main() -> None:
     while running:
         track = make_track(seed, args.difficulty, config.track, config.car.car_radius)
         outcome = {"restart": False}
+        last = {"state": None}  # run_episode's state, for the end-of-episode frame
 
         def on_step(state) -> bool | None:
+            last["state"] = state
             nonlocal running, show_rays, speed_mult, seed
             alive_now, keys = viewer.poll()
             if not alive_now:
@@ -98,9 +107,12 @@ def main() -> None:
         if outcome["restart"]:
             continue
 
-        # Episode over: show the final verdict until the user picks an action.
+        # Episode over: show the final verdict until the user picks an action
+        # (redrawing the full scene each frame — HUD text over a stale frame
+        # smears into garbage).
         laps = float(result.laps[0])
         verdict = "CRASHED" if result.crashed[0] else "finished"
+        final = last["state"]
         waiting = True
         while running and waiting:
             running, keys = viewer.poll()
@@ -110,8 +122,11 @@ def main() -> None:
                     waiting = False
                 elif key == pygame.K_r:
                     waiting = False
-            viewer.draw_hud([f"{verdict}: {laps:.2f} laps in {result.steps_run} steps"
-                             f"   —   N new track | R replay | ESC quit"])
+            viewer.draw_track(track)
+            if final is not None:
+                viewer.draw_cars(final.pos, final.heading, final.alive)
+            viewer.draw_hud([f"{verdict}: {laps:.2f} laps in {result.steps_run} steps",
+                             "N new track | R replay | ESC quit"])
             viewer.flip(fps=30)
 
     pygame.quit()

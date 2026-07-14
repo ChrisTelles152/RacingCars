@@ -92,10 +92,30 @@ def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainS
     """
     sim = config.sim
     g = track.occ_coll.shape[0]
+    pop = state.pos.shape[0]
 
-    obs = build_obs(state, track, config, rel_angles, sample_ts)
+    # Sense and think only for the living. Early generations are dominated by
+    # dead cars (most crash within seconds) and ray sensing is ~3/4 of step
+    # cost, so subsetting the two expensive stages is a large speedup — with
+    # bit-identical results, because every car's rows are computed
+    # independently of the others'.
     if controls is None:
-        controls = forward(genomes, obs, spec)
+        alive_idx = np.flatnonzero(state.alive)
+        if alive_idx.size == pop:
+            obs = build_obs(state, track, config, rel_angles, sample_ts)
+            controls = forward(genomes, obs, spec)
+        else:
+            rays = sense(state.pos[alive_idx], state.heading[alive_idx],
+                         track.occ_sensor, config.sensor, rel_angles, sample_ts)
+            speed_n = (state.speed[alive_idx] / config.car.v_max
+                       ).astype(np.float32)[:, None]
+            obs_alive = np.concatenate([rays, speed_n], axis=1)
+            obs = np.zeros((pop, obs_alive.shape[1]), dtype=np.float32)
+            obs[alive_idx] = obs_alive
+            controls = np.zeros((pop, 2), dtype=np.float32)
+            controls[alive_idx] = forward(genomes[alive_idx], obs_alive, spec)
+    else:
+        obs = build_obs(state, track, config, rel_angles, sample_ts)
     step_cars(state.pos, state.heading, state.speed, state.alive, controls, config.car)
 
     # Collision: one gather in the configuration-space grid.

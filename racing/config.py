@@ -31,10 +31,13 @@ class TrackConfig:
     samples_per_segment: int = 40  # dense spline samples before resampling
 
     # Difficulty knobs. Each value is interpolated easy -> hard by d in [0, 1].
+    # Hard-end values are calibrated so d=1.0 generation reliably succeeds
+    # within max_attempts (measured 0/150 seeds failing; at 14 points and
+    # 0.40 jitter it was ~20% — rejection sampling needs viable candidates).
     control_points_easy: int = 8      # fewer points = gentler, rounder track
-    control_points_hard: int = 14
+    control_points_hard: int = 12
     radial_jitter_easy: float = 0.12  # fraction of base_radius
-    radial_jitter_hard: float = 0.40
+    radial_jitter_hard: float = 0.34
     half_width_easy: float = 50.0     # px from centerline to wall
     half_width_hard: float = 22.0
     angle_jitter: float = 0.25        # fraction of even angular spacing
@@ -123,7 +126,7 @@ class TrainConfig:
     promote_threshold: float = 0.7  # median lap-fraction that counts as "good"
     promote_streak: int = 3         # consecutive good generations to promote
     promote_step: float = 0.1
-    demote_after: int = 20          # generations stuck -> ease off
+    demote_after: int = 20          # consecutive below-bar gens -> ease off
     demote_step: float = 0.05
     # Held-out validation: fixed seeds NEVER used in training. The train-vs-
     # validation gap is the honest overfitting signal.
