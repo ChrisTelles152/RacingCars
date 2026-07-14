@@ -84,7 +84,12 @@ def evaluate(genomes: np.ndarray, tracks: list[Track], config: Config):
     alive_rate = float(np.mean([(r.steps_alive == r.steps_run).mean() for r in results]))
     crash_rate = float(np.mean([r.crashed.mean() for r in results]))
     best_laps = float(np.max([r.laps.max() for r in results]))
-    return fitness.astype(np.float32), steps, alive_rate, crash_rate, best_laps
+    # Where on the track (as lap fraction) the crashed cars died.
+    crash_fracs = np.concatenate(
+        [r.final_ck[r.crashed] / t.n_checkpoints for r, t in zip(results, tracks)])
+    crash_hist, _ = np.histogram(crash_fracs, bins=10, range=(0.0, 1.0))
+    return (fitness.astype(np.float32), steps, alive_rate, crash_rate,
+            best_laps, crash_hist)
 
 
 def nonneg_int(text: str) -> int:
@@ -195,7 +200,8 @@ def main() -> None:
             tracks = [make_track(s, d, config.track, config.car.car_radius)
                       for s, d in zip(seeds, diffs)]
 
-        fitness, steps, alive_rate, crash_rate, best_laps = evaluate(genomes, tracks, config)
+        (fitness, steps, alive_rate, crash_rate, best_laps,
+         crash_hist) = evaluate(genomes, tracks, config)
         median_fit = float(np.median(fitness))
 
         # Curriculum: promote when the median car is competent for a streak
@@ -279,6 +285,8 @@ def main() -> None:
             val_mean=val_mean and round(val_mean, 4),
             val_min=val_min and round(val_min, 4),
             val_gap=val_gap and round(val_gap, 4),
+            realized_ds=";".join(f"{t.difficulty:.2f}" for t in tracks),
+            crash_hist=";".join(str(int(c)) for c in crash_hist),
         )
         print(f"gen {gen:4d}  d={difficulty:.2f}  best {fitness.max():6.3f}  "
               f"median {median_fit:6.3f}  crash {crash_rate*100:3.0f}%  "

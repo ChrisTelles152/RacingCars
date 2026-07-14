@@ -10,8 +10,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from compare import paired_t
+from evaluate import SUITE_SPECS
 from racing.config import TrackConfig
-from racing.track import _knob, make_track
+from racing.track import _knob, make_track, make_track_axes
 from train import aggregate_fitness, champion_key
 
 # fitness of 4 genomes (columns) on 3 tracks (rows)
@@ -88,3 +90,51 @@ def test_make_track_clips_to_max_difficulty():
     cfg = TrackConfig()
     t = make_track(31, 99.0, cfg, 6.0)
     assert t.difficulty == pytest.approx(cfg.max_difficulty)
+
+
+def test_make_track_axes_decouples_width_from_curvature():
+    """The failure heatmap's whole premise: d_width moves ONLY the corridor
+    width knob, d_curve only the corner knobs. If they leak into each other
+    the heatmap's axes are lies."""
+    cfg = TrackConfig()
+    wide_gentle = make_track_axes(50, 0.0, 0.0, cfg, 6.0)
+    narrow_gentle = make_track_axes(50, 1.0, 0.0, cfg, 6.0)
+    assert wide_gentle.half_width == pytest.approx(cfg.half_width_easy)
+    assert narrow_gentle.half_width == pytest.approx(cfg.half_width_hard)
+    # curvature axis alone must not move the width knob
+    wide_sharp = make_track_axes(50, 0.0, 1.0, cfg, 6.0)
+    assert wide_sharp.half_width == pytest.approx(cfg.half_width_easy)
+    # deterministic per (seed, axes)
+    again = make_track_axes(50, 0.0, 1.0, cfg, 6.0)
+    np.testing.assert_array_equal(wide_sharp.centerline, again.centerline)
+
+
+def test_suite_specs_registry():
+    """Suite definitions are load-bearing constants: the decision suite must
+    have its 200-track d=1.0 core (that size is what makes crash-rate
+    differences detectable), and suites must not share seeds with each other
+    or the validation range."""
+    test_seeds = {s for s, _ in SUITE_SPECS["test"]}
+    dec_seeds = {s for s, _ in SUITE_SPECS["decision"]}
+    assert len(test_seeds) == 125
+    assert sum(1 for _, d in SUITE_SPECS["decision"] if d == 1.0) == 200
+    assert not (test_seeds & dec_seeds)
+    assert min(test_seeds | dec_seeds) >= 20_000  # clear of val seeds (10000+)
+
+
+def test_paired_t_known_cases():
+    """The ship/kill gate's arithmetic, checked against hand-computed values:
+    diffs (0.3, 0.5, 0.4) -> mean .4, sd .1, t = .4/(.1/sqrt(3)) = 6.93,
+    df=2 critical 2.920 -> significant."""
+    t, crit, sig = paired_t(np.array([0.3, 0.5, 0.4]))
+    assert t == pytest.approx(6.928, abs=0.01)
+    assert crit == pytest.approx(2.920)
+    assert sig
+    # noisy, near-zero effect: not significant
+    t2, _, sig2 = paired_t(np.array([0.1, -0.1, 0.05]))
+    assert not sig2 and t2 < 1.0
+    # degenerate zero-variance cases must still decide sanely
+    _, _, sig3 = paired_t(np.array([0.2, 0.2, 0.2]))
+    assert sig3
+    _, _, sig4 = paired_t(np.array([-0.2, -0.2, -0.2]))
+    assert not sig4

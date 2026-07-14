@@ -59,6 +59,12 @@ class MetricsLogger:
         "best_laps", "alive_rate_end", "crash_rate",
         "steps_simulated", "wall_s",
         "val_mean", "val_min", "val_gap",
+        # realized per-track difficulties (";"-joined) — the generator may
+        # back off below what the curriculum requested
+        "realized_ds",
+        # where on the track cars crashed: 10-bin histogram over lap
+        # fraction (";"-joined counts) — the cheap failure-mode diagnostic
+        "crash_hist",
     ]
 
     def __init__(self, path: str):

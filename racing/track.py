@@ -214,15 +214,48 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
         f"half_width_easy, min_radius_margin, world_size)")
 
 
+def make_track_axes(seed: int, d_width: float, d_curve: float,
+                    cfg: TrackConfig, car_radius: float) -> Track:
+    """Generate a track with DECOUPLED difficulty axes (evaluation only).
+
+    d_width drives corridor narrowness; d_curve drives corner sharpness
+    (control points + radial jitter). The scalar-difficulty curriculum maps
+    to the diagonal (d, d); this off-diagonal access exists for the failure
+    heatmap — localizing WHICH geometry kills a champion. No difficulty
+    backoff here: mislabeling a heatmap cell would corrupt the diagnosis,
+    so after a few seed re-rolls we raise and let the caller skip the seed.
+
+    Caveat for readers of the heatmap: the validity checks couple the axes
+    by design (a wide corridor physically requires gentler corners to fit),
+    so extreme low-width/high-curve cells sample from the *generable* subset
+    of that label.
+    """
+    for attempt in range(3):
+        track = _generate(seed + 999_983 * attempt, min(d_width, d_curve),
+                          cfg, car_radius, d_width=d_width, d_curve=d_curve)
+        if track is not None:
+            track.seed = seed
+            return track
+    raise RuntimeError(f"no valid track for seed {seed} at "
+                       f"(d_width={d_width:.2f}, d_curve={d_curve:.2f})")
+
+
 def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
-              car_radius: float) -> Track | None:
-    """One rejection-sampling pass at a fixed difficulty; None if all fail."""
+              car_radius: float, d_width: float | None = None,
+              d_curve: float | None = None) -> Track | None:
+    """One rejection-sampling pass at a fixed difficulty; None if all fail.
+
+    d_width/d_curve override the scalar difficulty per knob group (used by
+    make_track_axes); by default both follow `difficulty`.
+    """
+    d_width = difficulty if d_width is None else d_width
+    d_curve = difficulty if d_curve is None else d_curve
     half_width = _knob(cfg.half_width_easy, cfg.half_width_hard,
-                       cfg.half_width_extreme, difficulty, cfg.max_difficulty)
+                       cfg.half_width_extreme, d_width, cfg.max_difficulty)
     n_control = round(_knob(cfg.control_points_easy, cfg.control_points_hard,
-                            cfg.control_points_extreme, difficulty, cfg.max_difficulty))
+                            cfg.control_points_extreme, d_curve, cfg.max_difficulty))
     jitter = _knob(cfg.radial_jitter_easy, cfg.radial_jitter_hard,
-                   cfg.radial_jitter_extreme, difficulty, cfg.max_difficulty)
+                   cfg.radial_jitter_extreme, d_curve, cfg.max_difficulty)
     center = cfg.world_size / 2.0
     margin = half_width + 2.0
 

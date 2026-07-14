@@ -206,6 +206,6 @@ suite; ship `--ensemble` only if it wins there.
   README experiments table updated with the measured result — negative
   results included — commit + push.
 - Seed-range registry: 10000+ validation, 11000+ new validation, 20000+
-  frozen test bank, 25000+ reserved, 29000+ generator dev, 30000+ width
-  suite, 31000+ trap suite, 40000+ decision suite, 101-103 shared training
-  seeds. Frozen suites never change; new capabilities get new suites.
+  frozen test bank, 25000+ heatmap cells, 29000+ generator dev, 30000+ width
+  suite, 31000+ trap suite, 41000+/45000+ decision suite, 101-103 shared
+  training seeds. Frozen suites never change; new capabilities get new suites.

@@ -157,6 +157,8 @@ class EpisodeResult:
     laps: np.ndarray         # (P,) float32, progress / track_length
     steps_alive: np.ndarray  # (P,) int32
     crashed: np.ndarray      # (P,) bool
+    final_ck: np.ndarray | None = None  # (P,) int32 last checkpoint index —
+    # for crashed cars this is (approximately) where they died
     steps_run: int = 0
 
 
@@ -186,5 +188,6 @@ def run_episode(genomes: np.ndarray, track: Track, config: Config,
         laps=lap_frac.astype(np.float32),
         steps_alive=state.steps_alive.copy(),
         crashed=state.crashed.copy(),
+        final_ck=state.cl_idx.copy(),
         steps_run=state.t,
     )
