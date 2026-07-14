@@ -60,6 +60,20 @@ def aggregate_fitness(per_track: np.ndarray, agg: str, cvar_frac: float) -> np.n
     raise ValueError(f"unknown fitness_agg {agg!r} (want mean|min|cvar)")
 
 
+# Worst-case (min) validation score only outranks mean once it improves by a
+# meaningful margin. Early in training every candidate crashes on the hardest
+# validation tracks, making raw min pure quantization noise (~0.01-0.04 lap
+# fractions) — a strict (min, mean) ordering would let that noise override
+# multi-lap differences in mean. Bucketing min in quarter-lap steps makes the
+# ordering "min first, but only in increments that mean something".
+CHAMPION_MIN_BUCKET = 0.25
+
+
+def champion_key(val_min: float, val_mean: float) -> tuple[float, float]:
+    """Sort key for champion candidates and the best-checkpoint ratchet."""
+    return (float(np.floor(val_min / CHAMPION_MIN_BUCKET)), val_mean)
+
+
 def evaluate(genomes: np.ndarray, tracks: list[Track], config: Config):
     """Aggregated fitness over tracks (P,), plus stats for logging."""
     results = [run_episode(genomes, t, config) for t in tracks]
@@ -161,7 +175,8 @@ def main() -> None:
     difficulty = args.start_difficulty
     streak = 0          # consecutive generations with a competent median
     gens_below_bar = 0  # consecutive generations below the promote threshold
-    best_val = (-np.inf, -np.inf)  # (val_min, val_mean), compared lexically
+    best_val = (-np.inf, -np.inf)       # champion_key of the saved checkpoint
+    best_val_stats = (-np.inf, -np.inf)  # its raw (val_min, val_mean), for logs
 
     for gen in range(tr.generations):
         t0 = time.perf_counter()
@@ -222,7 +237,8 @@ def main() -> None:
                                  for vt in val_tracks])          # (V, N)
             cand_min = val_fits.min(axis=0)
             cand_mean = val_fits.mean(axis=0)
-            pick = max(range(n_cand), key=lambda i: (cand_min[i], cand_mean[i]))
+            pick = max(range(n_cand),
+                       key=lambda i: champion_key(cand_min[i], cand_mean[i]))
             champ_idx = int(cand_idx[pick])
             val_mean = float(cand_mean[pick])
             val_min = float(cand_min[pick])
@@ -231,13 +247,15 @@ def main() -> None:
                     "val_mean": val_mean, "val_min": val_min, "difficulty": difficulty}
             save_genome(os.path.join(run_dir, "champion_latest.npz"),
                         genomes[champ_idx], config, meta)
-            if (val_min, val_mean) > best_val:
-                best_val = (val_min, val_mean)
+            if champion_key(val_min, val_mean) > best_val:
+                best_val = champion_key(val_min, val_mean)
+                best_val_stats = (val_min, val_mean)
                 save_genome(os.path.join(run_dir, "champion_best_val.npz"),
                             genomes[champ_idx], config, meta)
             print(f"  == validation: picked train-rank {pick + 1}/{n_cand}: "
                   f"min {val_min:.3f} mean {val_mean:.3f} laps "
-                  f"(best so far min {best_val[0]:.3f} mean {best_val[1]:.3f})")
+                  f"(best so far min {best_val_stats[0]:.3f} "
+                  f"mean {best_val_stats[1]:.3f})")
         elif fixed_mode and (gen % 10 == 0 or gen == tr.generations - 1):
             save_genome(os.path.join(run_dir, "champion_latest.npz"),
                         genomes[champ_idx], config,

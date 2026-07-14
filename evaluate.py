@@ -34,7 +34,11 @@ _track_cache: dict[str, list] = {}
 def test_bank(config):
     """The frozen test tracks for a config (cached across checkpoints)."""
     tr = config.train
+    # car_radius shapes each track's collision grid, so it must be part of
+    # the cache identity or checkpoints with different car geometry would be
+    # silently graded on the wrong walls.
     key = json.dumps(dataclasses.asdict(config.track), sort_keys=True) + \
+        f"|r{config.car.car_radius}" + \
         f"|{tr.test_seed_base}|{tr.test_per_difficulty}|{tr.test_difficulties}"
     if key not in _track_cache:
         bank = []

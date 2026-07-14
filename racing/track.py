@@ -195,7 +195,10 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
     raise instead of retrying forever.
     """
     requested = float(np.clip(difficulty, 0.0, cfg.max_difficulty))
-    for backoff in range(12):
+    # Ladder sized so the LAST rung is exactly difficulty 0.0 regardless of
+    # where we start — the raise below must only fire when 0.0 truly failed.
+    n_levels = int(np.ceil(requested / 0.1)) + 1
+    for backoff in range(n_levels):
         d = max(0.0, requested - 0.1 * backoff)
         track = _generate(seed + 999_983 * backoff, d, cfg, car_radius)
         if track is not None:

@@ -12,7 +12,7 @@ import pytest
 
 from racing.config import TrackConfig
 from racing.track import _knob, make_track
-from train import aggregate_fitness
+from train import aggregate_fitness, champion_key
 
 # fitness of 4 genomes (columns) on 3 tracks (rows)
 PER_TRACK = np.array([
@@ -59,6 +59,27 @@ def test_knob_piecewise_interpolation():
     assert _knob(50.0, 22.0, 18.0, 0.5, 1.3) == pytest.approx(36.0)
     # no overshoot configured -> clamps at hard
     assert _knob(50.0, 22.0, 18.0, 1.2, 1.0) == 22.0
+
+
+def test_champion_key_noise_min_falls_through_to_mean():
+    """Early in training every candidate's val_min is quantization noise
+    (everyone crashes on the hardest validation tracks within a few px);
+    a noise-level min difference must NOT outrank a multi-lap mean
+    difference, or champion selection degenerates into a random tiebreak."""
+    noisy_but_great = champion_key(0.015, 4.77)
+    lucky_min_but_awful = champion_key(0.035, 0.23)
+    assert noisy_but_great > lucky_min_but_awful
+
+
+def test_champion_key_material_min_improvement_dominates():
+    """A min improvement of a full bucket (0.25 laps) is a real robustness
+    gain and must outrank any mean difference — that is the whole point of
+    worst-case selection."""
+    robust = champion_key(1.30, 6.0)
+    fragile_fast = champion_key(0.90, 9.5)
+    assert robust > fragile_fast
+    # Within the same bucket, mean decides.
+    assert champion_key(8.50, 10.5) > champion_key(8.60, 8.9)
 
 
 def test_make_track_clips_to_max_difficulty():
