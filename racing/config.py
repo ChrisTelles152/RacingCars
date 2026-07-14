@@ -21,7 +21,9 @@ class TrackConfig:
     # World: square grid, 1 pixel = 1 world unit. Tracks are closed loops
     # around the center. All rasterized lookups index grid[y, x].
     world_size: int = 1024
-    base_radius: float = 380.0
+    # Keep base_radius * (1 + radial_jitter) + half_width < world_size / 2
+    # or tracks fall off the grid (validity check also enforces this).
+    base_radius: float = 320.0
 
     # M: the centerline is resampled to this many *equally spaced* points.
     # These double as progress checkpoints; spacing = track_length / M (~6 px).
