@@ -56,6 +56,20 @@ def _lerp(easy: float, hard: float, d: float) -> float:
     return easy + (hard - easy) * d
 
 
+def _knob(easy: float, hard: float, extreme: float, d: float, d_max: float) -> float:
+    """Difficulty knob: easy->hard over [0, 1], hard->extreme over (1, d_max].
+
+    The second segment exists for curriculum overshoot — training slightly
+    past d=1.0 so that d=1.0 evaluation happens inside the training
+    distribution rather than at its edge.
+    """
+    if d <= 1.0:
+        return _lerp(easy, hard, d)
+    if d_max <= 1.0:
+        return hard
+    return _lerp(hard, extreme, min(d - 1.0, d_max - 1.0) / (d_max - 1.0))
+
+
 def _catmull_rom_closed(points: np.ndarray, samples_per_segment: int) -> np.ndarray:
     """Sample a closed Catmull-Rom spline through `points` ((N, 2) array).
 
@@ -180,7 +194,7 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
     the truth. If even difficulty 0 fails, the config is unsatisfiable and we
     raise instead of retrying forever.
     """
-    requested = float(np.clip(difficulty, 0.0, 1.0))
+    requested = float(np.clip(difficulty, 0.0, cfg.max_difficulty))
     for backoff in range(12):
         d = max(0.0, requested - 0.1 * backoff)
         track = _generate(seed + 999_983 * backoff, d, cfg, car_radius)
@@ -200,9 +214,12 @@ def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float
 def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
               car_radius: float) -> Track | None:
     """One rejection-sampling pass at a fixed difficulty; None if all fail."""
-    half_width = _lerp(cfg.half_width_easy, cfg.half_width_hard, difficulty)
-    n_control = round(_lerp(cfg.control_points_easy, cfg.control_points_hard, difficulty))
-    jitter = _lerp(cfg.radial_jitter_easy, cfg.radial_jitter_hard, difficulty)
+    half_width = _knob(cfg.half_width_easy, cfg.half_width_hard,
+                       cfg.half_width_extreme, difficulty, cfg.max_difficulty)
+    n_control = round(_knob(cfg.control_points_easy, cfg.control_points_hard,
+                            cfg.control_points_extreme, difficulty, cfg.max_difficulty))
+    jitter = _knob(cfg.radial_jitter_easy, cfg.radial_jitter_hard,
+                   cfg.radial_jitter_extreme, difficulty, cfg.max_difficulty)
     center = cfg.world_size / 2.0
     margin = half_width + 2.0
 

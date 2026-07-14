@@ -6,20 +6,30 @@ grid lookup, bad normalization) would silently corrupt every observation the
 evolved brains ever see. All grids here are synthetic and hand-built so every
 expected distance is known in closed form.
 
-Distance readings are quantized: samples march in steps of
-ray_length / n_samples along each ray, and sample coordinates truncate to
-integer grid cells, adding up to ~1 px more. Tests therefore allow a
-tolerance of (ray_length / n_samples + 1) px unless exactness is guaranteed.
+Most tests use UNIFORM — a 7-ray fan with one shared range (ray_lengths=None,
+the fallback older checkpoints rely on) — because closed-form geometry is
+easiest to state there. Per-ray-length behavior gets its own tests at the end.
+
+Distance readings are quantized: samples march in steps of range / n_samples
+along each ray, and sample coordinates truncate to integer grid cells, adding
+up to ~1 px more. Tests therefore allow a tolerance of
+(range / n_samples + 1) px unless exactness is guaranteed.
 """
 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from racing.config import SensorConfig
 from racing.sensors import ray_geometry, sense
 
 G = 512  # synthetic grid size used throughout (same order as real tracks)
+
+# One shared range for every ray — the closed-form-friendly configuration.
+UNIFORM = SensorConfig(
+    ray_angles_deg=(-90.0, -45.0, -20.0, 0.0, 20.0, 45.0, 90.0),
+    ray_lengths=None, ray_length=160.0, n_samples=24)
 
 
 def _tol_px(cfg: SensorConfig) -> float:
@@ -30,10 +40,10 @@ def _tol_px(cfg: SensorConfig) -> float:
 def _sense_one(x: float, y: float, heading: float, occ: np.ndarray,
                cfg: SensorConfig) -> np.ndarray:
     """Convenience: sense a single car, return its (R,) reading."""
-    rel_angles, sample_ts = ray_geometry(cfg)
+    rel_angles, sample_ts, lengths = ray_geometry(cfg)
     pos = np.array([[x, y]], dtype=np.float32)
     hdg = np.array([heading], dtype=np.float32)
-    return sense(pos, hdg, occ, cfg, rel_angles, sample_ts)[0]
+    return sense(pos, hdg, occ, cfg, rel_angles, sample_ts, lengths)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -42,30 +52,52 @@ def _sense_one(x: float, y: float, heading: float, occ: np.ndarray,
 
 def test_ray_geometry_shapes_and_sample_spacing():
     """Downstream code (brain input width, sense broadcasting) relies on the
-    exact shapes (R,) and (S,), on samples increasing monotonically (else
-    'first hit' would not mean 'nearest wall'), and on the last sample landing
-    exactly at ray_length (else max range would be silently shorter)."""
-    cfg = SensorConfig()
-    rel_angles, sample_ts = ray_geometry(cfg)
+    exact shapes (R,), (R, S), (R,); on samples increasing monotonically
+    (else 'first hit' would not mean 'nearest wall'); and on each ray's last
+    sample landing exactly at its own range."""
+    cfg = UNIFORM
+    rel_angles, sample_ts, lengths = ray_geometry(cfg)
+    r = len(cfg.ray_angles_deg)
 
-    assert rel_angles.shape == (len(cfg.ray_angles_deg),)
-    assert sample_ts.shape == (cfg.n_samples,)
+    assert rel_angles.shape == (r,)
+    assert sample_ts.shape == (r, cfg.n_samples)
+    assert lengths.shape == (r,)
     assert rel_angles.dtype == np.float32
     assert sample_ts.dtype == np.float32
 
-    # Angles are just deg->rad of the configured fan.
     np.testing.assert_allclose(
         rel_angles, np.deg2rad(cfg.ray_angles_deg), rtol=1e-6)
+    np.testing.assert_array_equal(lengths, np.full(r, cfg.ray_length, np.float32))
 
-    # Strictly increasing march, uniform spacing, ending exactly at max range.
-    assert np.all(np.diff(sample_ts) > 0)
-    np.testing.assert_allclose(np.diff(sample_ts),
-                               cfg.ray_length / cfg.n_samples, rtol=1e-5)
-    assert sample_ts[-1] == np.float32(cfg.ray_length)
-    # First sample is one step out, NOT 0 — the car's own cell never counts
-    # as a wall hit even when the car hugs a wall.
-    np.testing.assert_allclose(sample_ts[0], cfg.ray_length / cfg.n_samples,
-                               rtol=1e-5)
+    # Strictly increasing march per ray, uniform spacing, ending exactly at
+    # that ray's range; first sample one step out, NOT 0 — the car's own cell
+    # never counts as a wall hit even when the car hugs a wall.
+    assert np.all(np.diff(sample_ts, axis=1) > 0)
+    for i in range(r):
+        np.testing.assert_allclose(np.diff(sample_ts[i]),
+                                   lengths[i] / cfg.n_samples, rtol=1e-5)
+        np.testing.assert_allclose(sample_ts[i, -1], lengths[i], rtol=1e-6)
+        np.testing.assert_allclose(sample_ts[i, 0], lengths[i] / cfg.n_samples,
+                                   rtol=1e-5)
+
+
+def test_ray_geometry_default_config_is_forward_heavy():
+    """The default fan implements the perception-horizon design: long dense
+    rays ahead (where braking decisions live), short rays to the sides."""
+    cfg = SensorConfig()
+    rel_angles, sample_ts, lengths = ray_geometry(cfg)
+    assert len(cfg.ray_angles_deg) == len(cfg.ray_lengths)
+    forward = lengths[np.abs(np.rad2deg(rel_angles)) <= 10.0]
+    sideways = lengths[np.abs(np.rad2deg(rel_angles)) >= 90.0]
+    assert forward.min() > sideways.max()
+
+
+def test_ray_geometry_rejects_mismatched_lengths():
+    """A ray_lengths tuple that doesn't match the angle fan is a config bug;
+    it must fail loudly, not broadcast into silent nonsense."""
+    cfg = SensorConfig(ray_angles_deg=(0.0, 45.0), ray_lengths=(100.0,))
+    with pytest.raises(ValueError):
+        ray_geometry(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +107,7 @@ def test_ray_geometry_shapes_and_sample_spacing():
 def test_clear_rays_read_exactly_one():
     """1.0 must mean *exactly* 'nothing in range': the brain treats saturated
     rays as open road, and an almost-1.0 value would leak a phantom wall."""
-    cfg = SensorConfig()
+    cfg = UNIFORM
     occ = np.zeros((G, G), dtype=bool)  # empty world, no walls at all
     out = _sense_one(G / 2, G / 2, 0.7, occ, cfg)
     np.testing.assert_array_equal(out, np.ones(len(cfg.ray_angles_deg),
@@ -85,7 +117,7 @@ def test_clear_rays_read_exactly_one():
 def test_forward_ray_reads_wall_at_known_distance():
     """The 0-degree ray is the car's forward eye; its reading must equal the
     true distance to the wall (normalized), up to marching quantization."""
-    cfg = SensorConfig()
+    cfg = UNIFORM
     occ = np.zeros((G, G), dtype=bool)
     x_wall = 320
     # A THICK slab, not a 1-px column: angled rays advance several px in x
@@ -118,7 +150,7 @@ def test_side_rays_measure_corridor_half_width():
     """Corridor centering is the core evolved behavior: the +-90 rays must
     report the true lateral clearance or the 'stay centered' gradient the
     brains exploit would point the wrong way."""
-    cfg = SensorConfig()
+    cfg = UNIFORM
     occ = np.ones((G, G), dtype=bool)      # all wall...
     y0, y1 = 100, 160                       # ...with a free horizontal band
     occ[y0:y1 + 1, :] = False
@@ -143,7 +175,7 @@ def test_heading_rotation_gives_same_corridor_readings():
     """Sensors are defined relative to the heading, so a vertical corridor
     seen by a car heading +y must look identical to a horizontal corridor
     seen by a car heading +x — any asymmetry means a broken angle convention."""
-    cfg = SensorConfig()
+    cfg = UNIFORM
     y0, y1 = 100, 160
 
     occ_h = np.ones((G, G), dtype=bool)
@@ -161,6 +193,38 @@ def test_heading_rotation_gives_same_corridor_readings():
 
 
 # ---------------------------------------------------------------------------
+# per-ray lengths
+# ---------------------------------------------------------------------------
+
+def test_per_ray_lengths_normalize_by_own_range():
+    """Two rays at the same angle-to-wall but different ranges must report
+    the same PHYSICAL distance as different normalized values (d / own range)
+    — normalization by the wrong ray's range would warp the observation."""
+    cfg = SensorConfig(ray_angles_deg=(0.0, 0.0), ray_lengths=(100.0, 200.0),
+                       n_samples=50)
+    occ = np.zeros((G, G), dtype=bool)
+    occ[:, 300:330] = True                 # slab 80 px ahead of the car
+    out = _sense_one(220.0, 256.0, 0.0, occ, cfg)
+    tol0 = (100.0 / cfg.n_samples + 1.0) / 100.0
+    tol1 = (200.0 / cfg.n_samples + 1.0) / 200.0
+    assert abs(out[0] - 80.0 / 100.0) <= tol0
+    assert abs(out[1] - 80.0 / 200.0) <= tol1
+
+
+def test_short_ray_clear_while_long_ray_sees():
+    """A wall beyond a short ray's range but inside a long ray's range must
+    read clear (1.0) on the short ray and as a hit on the long one — this is
+    exactly how the forward rays out-see the side rays."""
+    cfg = SensorConfig(ray_angles_deg=(0.0, 0.0), ray_lengths=(100.0, 300.0),
+                       n_samples=50)
+    occ = np.zeros((G, G), dtype=bool)
+    occ[:, 400:430] = True                 # slab 180 px ahead
+    out = _sense_one(220.0, 256.0, 0.0, occ, cfg)
+    assert out[0] == np.float32(1.0)
+    assert out[1] < 1.0
+
+
+# ---------------------------------------------------------------------------
 # grid-edge behavior
 # ---------------------------------------------------------------------------
 
@@ -169,7 +233,7 @@ def test_ray_leaving_grid_hits_border_wall():
     wall (as real tracks guarantee), a ray pointing off-world must read the
     border as a wall, never as open road — otherwise cars would happily
     drive off the map."""
-    cfg = SensorConfig()
+    cfg = UNIFORM
     occ = np.zeros((G, G), dtype=bool)
     occ[0, :] = occ[-1, :] = occ[:, 0] = occ[:, -1] = True  # border = wall
 
@@ -184,11 +248,11 @@ def test_ray_leaving_grid_hits_border_wall():
 
 
 def test_small_grid_all_rays_clamped_to_border():
-    """With ray_length (160 px) larger than the whole grid (64 px), most
+    """With ray range (160 px) larger than the whole grid (64 px), most
     samples land off-world. Every ray must still report the border wall at
     its true geometric distance — off-grid samples clamp to wall, they do
     not wrap around or read clear."""
-    cfg = SensorConfig()
+    cfg = UNIFORM
     g = 64
     occ = np.zeros((g, g), dtype=bool)
     occ[0, :] = occ[-1, :] = occ[:, 0] = occ[:, -1] = True
@@ -216,7 +280,7 @@ def test_vectorized_sense_matches_per_car_loop():
     if batching changed any reading versus sensing cars one at a time, the
     population's fitness would depend on batch composition — a subtle,
     determinism-breaking bug."""
-    cfg = SensorConfig()
+    cfg = SensorConfig()                   # the real 11-ray per-length fan
     rng = np.random.default_rng(1234)
 
     occ = np.zeros((G, G), dtype=bool)
@@ -229,13 +293,13 @@ def test_vectorized_sense_matches_per_car_loop():
     pos = rng.uniform(40.0, G - 40.0, size=(p, 2)).astype(np.float32)
     heading = rng.uniform(-np.pi, np.pi, size=p).astype(np.float32)
 
-    rel_angles, sample_ts = ray_geometry(cfg)
-    batched = sense(pos, heading, occ, cfg, rel_angles, sample_ts)
+    rel_angles, sample_ts, lengths = ray_geometry(cfg)
+    batched = sense(pos, heading, occ, cfg, rel_angles, sample_ts, lengths)
     assert batched.shape == (p, len(cfg.ray_angles_deg))
 
     for i in range(p):
         solo = sense(pos[i:i + 1], heading[i:i + 1], occ, cfg,
-                     rel_angles, sample_ts)
+                     rel_angles, sample_ts, lengths)
         np.testing.assert_array_equal(batched[i], solo[0])
 
 
@@ -243,22 +307,24 @@ def test_output_dtype_and_range():
     """build_obs feeds these values straight into a float32 MLP; a dtype
     upcast would silently double memory/compute, and any value outside
     [0, 1] would break the normalization contract the network trains on."""
-    cfg = SensorConfig()
+    cfg = SensorConfig()                   # the real 11-ray per-length fan
     rng = np.random.default_rng(7)
 
     occ = rng.random((G, G)) < 0.3         # 30% random wall speckle
     pos = rng.uniform(10.0, G - 10.0, size=(8, 2)).astype(np.float32)
     heading = rng.uniform(-np.pi, np.pi, size=8).astype(np.float32)
 
-    rel_angles, sample_ts = ray_geometry(cfg)
-    out = sense(pos, heading, occ, cfg, rel_angles, sample_ts)
+    rel_angles, sample_ts, lengths = ray_geometry(cfg)
+    out = sense(pos, heading, occ, cfg, rel_angles, sample_ts, lengths)
 
     assert out.dtype == np.float32
     assert out.shape == (8, len(cfg.ray_angles_deg))
     assert np.all(out >= 0.0)
     assert np.all(out <= 1.0)
     # Readings are quantized to the sample grid: every non-clear value must
-    # be one of the normalized sample distances.
-    allowed = np.concatenate([sample_ts / cfg.ray_length,
-                              [np.float32(1.0)]]).astype(np.float32)
-    assert np.all(np.isin(out, allowed))
+    # be one of that ray's normalized sample distances (up to float32
+    # rounding of the (length * step) / length round-trip).
+    steps = np.arange(1, cfg.n_samples + 1, dtype=np.float32) / cfg.n_samples
+    allowed = np.concatenate([steps, [np.float32(1.0)]])
+    diffs = np.abs(out.ravel()[:, None] - allowed[None, :]).min(axis=1)
+    assert np.all(diffs < 1e-6)

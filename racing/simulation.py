@@ -72,16 +72,17 @@ def init_state(pop: int, track: Track) -> SimState:
 
 
 def build_obs(state: SimState, track: Track, config: Config,
-              rel_angles: np.ndarray, sample_ts: np.ndarray) -> np.ndarray:
+              rays: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
     """Observation vector (P, R+1): normalized ray distances + own speed."""
-    rays = sense(state.pos, state.heading, track.occ_sensor,
-                 config.sensor, rel_angles, sample_ts)
+    rel_angles, sample_ts, lengths = rays
+    dists = sense(state.pos, state.heading, track.occ_sensor,
+                  config.sensor, rel_angles, sample_ts, lengths)
     speed_n = (state.speed / config.car.v_max).astype(np.float32)[:, None]
-    return np.concatenate([rays, speed_n], axis=1)
+    return np.concatenate([dists, speed_n], axis=1)
 
 
 def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainSpec,
-         config: Config, rel_angles: np.ndarray, sample_ts: np.ndarray,
+         config: Config, rays: tuple[np.ndarray, np.ndarray, np.ndarray],
          controls: np.ndarray | None = None) -> None:
     """Advance the whole population one timestep: sense -> think -> move -> score.
 
@@ -102,20 +103,22 @@ def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainS
     if controls is None:
         alive_idx = np.flatnonzero(state.alive)
         if alive_idx.size == pop:
-            obs = build_obs(state, track, config, rel_angles, sample_ts)
+            obs = build_obs(state, track, config, rays)
             controls = forward(genomes, obs, spec)
         else:
-            rays = sense(state.pos[alive_idx], state.heading[alive_idx],
-                         track.occ_sensor, config.sensor, rel_angles, sample_ts)
+            rel_angles, sample_ts, lengths = rays
+            dists = sense(state.pos[alive_idx], state.heading[alive_idx],
+                          track.occ_sensor, config.sensor,
+                          rel_angles, sample_ts, lengths)
             speed_n = (state.speed[alive_idx] / config.car.v_max
                        ).astype(np.float32)[:, None]
-            obs_alive = np.concatenate([rays, speed_n], axis=1)
+            obs_alive = np.concatenate([dists, speed_n], axis=1)
             obs = np.zeros((pop, obs_alive.shape[1]), dtype=np.float32)
             obs[alive_idx] = obs_alive
             controls = np.zeros((pop, 2), dtype=np.float32)
             controls[alive_idx] = forward(genomes[alive_idx], obs_alive, spec)
     else:
-        obs = build_obs(state, track, config, rel_angles, sample_ts)
+        obs = build_obs(state, track, config, rays)
     step_cars(state.pos, state.heading, state.speed, state.alive, controls, config.car)
 
     # Collision: one gather in the configuration-space grid.
@@ -165,13 +168,13 @@ def run_episode(genomes: np.ndarray, track: Track, config: Config,
     from it aborts the episode (viewer window closed).
     """
     spec = make_spec(config.brain, config.sensor)
-    rel_angles, sample_ts = ray_geometry(config.sensor)
+    rays = ray_geometry(config.sensor)
     if max_steps is None:
         max_steps = config.sim.max_steps
 
     state = init_state(genomes.shape[0], track)
     while state.t < max_steps and state.alive.any():
-        step(state, track, genomes, spec, config, rel_angles, sample_ts)
+        step(state, track, genomes, spec, config, rays)
         if on_step is not None and on_step(state) is False:
             break
 

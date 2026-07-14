@@ -41,10 +41,31 @@ from racing.simulation import run_episode
 from racing.track import Track, make_track
 
 
+def aggregate_fitness(per_track: np.ndarray, agg: str, cvar_frac: float) -> np.ndarray:
+    """Collapse per-track fitness (K, P) into one score per genome (P,).
+
+    The choice IS part of the reward design: 'mean' happily trades a rare
+    crash for average speed; 'min' scores each genome by its worst track
+    (maximally risk-averse, noisy at small K); 'cvar' averages the worst
+    ceil(cvar_frac * K) tracks — pressure against tail-event crashes while
+    keeping some of mean's stability.
+    """
+    if agg == "mean":
+        return per_track.mean(axis=0)
+    if agg == "min":
+        return per_track.min(axis=0)
+    if agg == "cvar":
+        worst = max(1, int(np.ceil(cvar_frac * per_track.shape[0])))
+        return np.sort(per_track, axis=0)[:worst].mean(axis=0)
+    raise ValueError(f"unknown fitness_agg {agg!r} (want mean|min|cvar)")
+
+
 def evaluate(genomes: np.ndarray, tracks: list[Track], config: Config):
-    """Mean fitness over tracks (P,), plus stats for logging."""
+    """Aggregated fitness over tracks (P,), plus stats for logging."""
     results = [run_episode(genomes, t, config) for t in tracks]
-    fitness = np.mean([r.fitness for r in results], axis=0)
+    per_track = np.stack([r.fitness for r in results])
+    fitness = aggregate_fitness(per_track, config.train.fitness_agg,
+                                config.train.cvar_frac)
     steps = sum(r.steps_run for r in results)
     alive_rate = float(np.mean([(r.steps_alive == r.steps_run).mean() for r in results]))
     crash_rate = float(np.mean([r.crashed.mean() for r in results]))
@@ -75,6 +96,8 @@ def main() -> None:
                          "(the 'can evolution learn at all?' sanity mode)")
     ap.add_argument("--fixed-difficulty", type=float, default=0.3,
                     help="difficulty used with --fixed-track-seed")
+    ap.add_argument("--fitness-agg", choices=["mean", "min", "cvar"], default=None,
+                    help="override how per-track fitness aggregates (config: cvar)")
     args = ap.parse_args()
 
     config = Config()
@@ -90,6 +113,9 @@ def main() -> None:
     if args.generations is not None:
         config = dataclasses.replace(
             config, train=dataclasses.replace(config.train, generations=args.generations))
+    if args.fitness_agg is not None:
+        config = dataclasses.replace(
+            config, train=dataclasses.replace(config.train, fitness_agg=args.fitness_agg))
     tr = config.train
     if config.evo.population <= config.evo.elite:
         ap.error(f"population ({config.evo.population}) must exceed the elite "
@@ -135,7 +161,7 @@ def main() -> None:
     difficulty = args.start_difficulty
     streak = 0          # consecutive generations with a competent median
     gens_below_bar = 0  # consecutive generations below the promote threshold
-    best_val = -np.inf
+    best_val = (-np.inf, -np.inf)  # (val_min, val_mean), compared lexically
 
     for gen in range(tr.generations):
         t0 = time.perf_counter()
@@ -169,8 +195,12 @@ def main() -> None:
             else:
                 streak = 0
                 gens_below_bar += 1
-            if streak >= tr.promote_streak and difficulty < 1.0:
-                difficulty = min(1.0, difficulty + tr.promote_step)
+            # Promotion runs past 1.0 up to max_difficulty (curriculum
+            # overshoot): d=1.0 evaluation should be interpolation, not the
+            # edge of the training distribution.
+            d_cap = config.track.max_difficulty
+            if streak >= tr.promote_streak and difficulty < d_cap:
+                difficulty = min(d_cap, difficulty + tr.promote_step)
                 streak = 0
                 print(f"  >> curriculum promoted to difficulty {difficulty:.2f}")
             elif gens_below_bar >= tr.demote_after and difficulty > 0.0:
@@ -178,26 +208,36 @@ def main() -> None:
                 gens_below_bar = 0
                 print(f"  << population stuck, easing to difficulty {difficulty:.2f}")
 
-        # Held-out validation of the current champion.
+        # Held-out validation with ROBUST champion selection: the argmax over
+        # K noisy tracks is a lottery ticket (winner's curse — argmax of a
+        # noisy estimate is biased up), so race the top-N train genomes on
+        # the whole validation set and keep the best WORST-case performer.
         val_mean = val_min = val_gap = ""
         champ_idx = int(fitness.argmax())
         if not fixed_mode and (gen % tr.val_every == 0 or gen == tr.generations - 1):
-            champ = genomes[champ_idx][None, :]
-            val_fits = np.array([run_episode(champ, vt, config).fitness[0]
-                                 for vt in val_tracks])
-            val_mean = float(val_fits.mean())
-            val_min = float(val_fits.min())
+            n_cand = min(tr.champion_candidates, len(fitness))
+            cand_idx = np.argsort(-fitness)[:n_cand]
+            cand = genomes[cand_idx]  # (N, G): one batched episode per val track
+            val_fits = np.stack([run_episode(cand, vt, config).fitness
+                                 for vt in val_tracks])          # (V, N)
+            cand_min = val_fits.min(axis=0)
+            cand_mean = val_fits.mean(axis=0)
+            pick = max(range(n_cand), key=lambda i: (cand_min[i], cand_mean[i]))
+            champ_idx = int(cand_idx[pick])
+            val_mean = float(cand_mean[pick])
+            val_min = float(cand_min[pick])
             val_gap = float(fitness[champ_idx] - val_mean)
             meta = {"generation": gen, "train_fitness": float(fitness[champ_idx]),
                     "val_mean": val_mean, "val_min": val_min, "difficulty": difficulty}
             save_genome(os.path.join(run_dir, "champion_latest.npz"),
                         genomes[champ_idx], config, meta)
-            if val_mean > best_val:
-                best_val = val_mean
+            if (val_min, val_mean) > best_val:
+                best_val = (val_min, val_mean)
                 save_genome(os.path.join(run_dir, "champion_best_val.npz"),
                             genomes[champ_idx], config, meta)
-            print(f"  == validation: mean {val_mean:.3f} min {val_min:.3f} laps "
-                  f"(best so far {best_val:.3f})")
+            print(f"  == validation: picked train-rank {pick + 1}/{n_cand}: "
+                  f"min {val_min:.3f} mean {val_mean:.3f} laps "
+                  f"(best so far min {best_val[0]:.3f} mean {best_val[1]:.3f})")
         elif fixed_mode and (gen % 10 == 0 or gen == tr.generations - 1):
             save_genome(os.path.join(run_dir, "champion_latest.npz"),
                         genomes[champ_idx], config,

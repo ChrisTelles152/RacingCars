@@ -42,6 +42,15 @@ class TrackConfig:
     half_width_hard: float = 22.0
     angle_jitter: float = 0.25        # fraction of even angular spacing
 
+    # Curriculum overshoot: training difficulty may exceed 1.0 so that the
+    # d=1.0 evaluation point sits INSIDE the training distribution instead of
+    # at its extrapolation edge (models are reliable where they interpolate).
+    # "Extreme" values are the knob settings at max_difficulty.
+    max_difficulty: float = 1.3
+    half_width_extreme: float = 18.0        # car is 12 px wide — still fits
+    control_points_extreme: int = 13
+    radial_jitter_extreme: float = 0.38
+
     # Validity (rejection sampling): a candidate track is rejected when a
     # corner is too tight for its width, or two sections pinch together.
     min_radius_margin: float = 1.6  # min curvature radius > margin * half_width
@@ -67,9 +76,19 @@ class CarConfig:
 @dataclass(frozen=True)
 class SensorConfig:
     # Ray-cast distance sensors, angles relative to the car's heading.
-    ray_angles_deg: tuple[float, ...] = (-90.0, -45.0, -20.0, 0.0, 20.0, 45.0, 90.0)
-    ray_length: float = 160.0   # px, max sensing range
-    n_samples: int = 24         # S: samples marched along each ray (grid lookup)
+    # The fan is dense and LONG toward the front: braking from v_max to
+    # tight-corner speed consumes ~125 px, so corner geometry must be
+    # readable well beyond that — a policy can never out-drive its sensors
+    # (perception horizon >= stopping distance, the classic robotics rule).
+    ray_angles_deg: tuple[float, ...] = (
+        -90.0, -45.0, -22.0, -10.0, -4.0, 0.0, 4.0, 10.0, 22.0, 45.0, 90.0)
+    # Per-ray range (px), same order as the angles: long ahead, short sides.
+    # None -> every ray uses the scalar ray_length (old checkpoints rely on
+    # this fallback, so their 7-ray configs keep loading unchanged).
+    ray_lengths: tuple[float, ...] | None = (
+        160.0, 160.0, 220.0, 300.0, 300.0, 300.0, 300.0, 300.0, 220.0, 160.0, 160.0)
+    ray_length: float = 300.0   # px, fallback range when ray_lengths is None
+    n_samples: int = 36         # S: samples marched along each ray (grid lookup)
 
 
 @dataclass(frozen=True)
@@ -115,10 +134,17 @@ class SimConfig:
 @dataclass(frozen=True)
 class TrainConfig:
     generations: int = 300
-    # K fresh random tracks per generation; fitness = mean over the K tracks.
-    # New tracks every generation is the anti-overfitting mechanism: there is
-    # nothing to memorize.
+    # K fresh random tracks per generation. New tracks every generation is
+    # the anti-overfitting mechanism: there is nothing to memorize.
     tracks_per_generation: int = 3
+    # How per-track fitness aggregates into one score ("the aggregation
+    # function is part of the reward design"): 'mean' trades rare crashes for
+    # average speed; 'min' scores you by your worst track; 'cvar' is the mean
+    # of the worst ceil(cvar_frac * K) tracks — risk-sensitive middle ground.
+    # Default cvar: crashing on the occasional tightest corner is exactly a
+    # tail event that mean-fitness never punishes.
+    fitness_agg: str = "cvar"       # 'mean' | 'min' | 'cvar'
+    cvar_frac: float = 0.5          # with K=3: mean of the worst 2 tracks
     # Curriculum: difficulty d ratchets up as the population gets good.
     # Per-track difficulty is sampled from the trailing band [d - band, d]
     # so easy tracks stay in the mix (no catastrophic forgetting).
@@ -133,6 +159,16 @@ class TrainConfig:
     val_every: int = 10
     val_seeds: tuple[int, ...] = tuple(range(10_000, 10_010))
     val_difficulties: tuple[float, ...] = (0.3, 0.3, 0.5, 0.5, 0.7, 0.7, 0.9, 0.9, 1.0, 1.0)
+    # Robust champion selection: argmax over K noisy tracks is a lottery (the
+    # winner's curse), so each validation round races the top-N train genomes
+    # on the validation set and keeps the one with the best WORST-case score.
+    champion_candidates: int = 5
+    # Held-out TEST bank (evaluate.py): seeds and per-difficulty count for the
+    # final honest number. Used for selection exactly zero times — validation
+    # drives checkpointing 30+ times per run, so it is slowly overfit too.
+    test_seed_base: int = 20_000
+    test_per_difficulty: int = 25
+    test_difficulties: tuple[float, ...] = (0.3, 0.5, 0.7, 0.9, 1.0)
 
 
 @dataclass(frozen=True)
@@ -160,6 +196,11 @@ class Config:
         kwargs: dict = {"seed": raw["seed"]}
         for name, cls in parts.items():
             sub = dict(raw[name])
+            # Checkpoints saved before per-ray ranges existed have no
+            # ray_lengths key; they must get the uniform-range fallback, not
+            # today's default tuple (which matches today's angle fan only).
+            if cls is SensorConfig and "ray_lengths" not in sub:
+                sub["ray_lengths"] = None
             # JSON turns tuples into lists; restore tuples for frozen fields.
             for f in dataclasses.fields(cls):
                 if f.type.startswith("tuple") and isinstance(sub.get(f.name), list):

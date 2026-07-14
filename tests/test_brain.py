@@ -19,16 +19,17 @@ from racing.config import BrainConfig, SensorConfig
 # genome_size / BrainSpec arithmetic
 # ---------------------------------------------------------------------------
 
-def test_genome_size_default_config_is_178():
-    """The default (7 rays + speed) -> 16 hidden -> 2 net must be exactly 178
+def test_genome_size_default_config_is_242():
+    """The default (11 rays + speed) -> 16 hidden -> 2 net must be exactly 242
     floats: every saved genome, checkpoint, and population matrix depends on
-    this number staying fixed."""
+    this number staying fixed. (It was 178 with the original 7-ray fan —
+    old checkpoints still load because they embed their own config.)"""
     spec = make_spec(BrainConfig(), SensorConfig())
-    assert spec.n_in == 8  # 7 ray angles + 1 speed input
+    assert spec.n_in == 12  # 11 ray angles + 1 speed input
     assert spec.hidden == 16
     assert spec.n_out == 2
-    # 8*16 (w1) + 16 (b1) + 16*2 (w2) + 2 (b2)
-    assert spec.genome_size == 178
+    # 12*16 (w1) + 16 (b1) + 16*2 (w2) + 2 (b2)
+    assert spec.genome_size == 242
 
 
 def test_genome_size_toy_spec_math():

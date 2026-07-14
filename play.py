@@ -46,7 +46,7 @@ def main() -> None:
 
     config = Config()
     spec = make_spec(config.brain, config.sensor)
-    rel_angles, sample_ts = ray_geometry(config.sensor)
+    rays = ray_geometry(config.sensor)
 
     seed = args.track_seed
     track = make_track(seed, args.difficulty, config.track, config.car.car_radius)
@@ -73,8 +73,7 @@ def main() -> None:
         controls = np.array([[steer, throttle]], dtype=np.float32)
 
         if state.alive[0]:
-            step(state, track, None, spec, config, rel_angles, sample_ts,
-                 controls=controls)
+            step(state, track, None, spec, config, rays, controls=controls)
 
         viewer.draw_track(track)
         if show_rays and state.alive[0]:

@@ -24,15 +24,14 @@ CONFIG = Config()
 TRACK = make_track(seed=7, difficulty=0.0, cfg=CONFIG.track,
                    car_radius=CONFIG.car.car_radius)
 SPEC = make_spec(CONFIG.brain, CONFIG.sensor)
-REL_ANGLES, SAMPLE_TS = ray_geometry(CONFIG.sensor)
+RAYS = ray_geometry(CONFIG.sensor)
 
 
 def _scripted_step(state, steer: float, throttle: float) -> None:
     """Advance one tick with fixed controls for every car (genomes unused)."""
     p = state.pos.shape[0]
     controls = np.tile(np.array([steer, throttle], dtype=np.float32), (p, 1))
-    step(state, TRACK, None, SPEC, CONFIG, REL_ANGLES, SAMPLE_TS,
-         controls=controls)
+    step(state, TRACK, None, SPEC, CONFIG, RAYS, controls=controls)
 
 
 def test_init_state_everyone_at_start():

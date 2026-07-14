@@ -92,13 +92,14 @@ class Viewer:
     def draw_rays(self, track: Track, pos: np.ndarray, heading: np.ndarray,
                   sensor_cfg, indices) -> None:
         """Sensor rays for selected cars, recomputed just for display."""
-        rel, ts = ray_geometry(sensor_cfg)
+        rel, ts, lengths = ray_geometry(sensor_cfg)
         idx = np.atleast_1d(indices)
-        dist = sense(pos[idx], heading[idx], track.occ_sensor, sensor_cfg, rel, ts)
+        dist = sense(pos[idx], heading[idx], track.occ_sensor, sensor_cfg,
+                     rel, ts, lengths)
         for row, i in enumerate(idx):
             angles = heading[i] + rel
             for r in range(len(rel)):
-                d = dist[row, r] * sensor_cfg.ray_length
+                d = dist[row, r] * lengths[r]
                 end = pos[i] + d * np.array([np.cos(angles[r]), np.sin(angles[r])])
                 hit = dist[row, r] < 0.999
                 pygame.draw.line(self.screen, RAY_HIT if hit else RAY,
