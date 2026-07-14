@@ -137,7 +137,9 @@ def print_group_summary(results: list[dict]) -> None:
               f"laps {ml.mean():.2f} +- {ml.std(ddof=1):.2f}")
 
 
-def run_heatmap(path: str, out_png: str | None = None) -> None:
+def run_heatmap(path: str, out_png: str | None = None,
+                levels: tuple[float, ...] = HEATMAP_LEVELS,
+                per_cell: int = HEATMAP_TRACKS_PER_CELL) -> None:
     """Failure diagnosis: crash rate over decoupled (width, curvature) axes.
 
     Answers WHERE the champion's crashes come from — narrow corridors, sharp
@@ -146,12 +148,12 @@ def run_heatmap(path: str, out_png: str | None = None) -> None:
     couple the axes by design: wide corridors need room for their corners).
     """
     genome, config, meta = load_genome(path)
-    n = len(HEATMAP_LEVELS)
+    n = len(levels)
     crash = np.full((n, n), np.nan)
-    for wi, dw in enumerate(HEATMAP_LEVELS):
-        for ci, dc in enumerate(HEATMAP_LEVELS):
-            crashes, done, seed = 0, 0, HEATMAP_SEED_BASE + (wi * n + ci) * 100
-            while done < HEATMAP_TRACKS_PER_CELL:
+    for wi, dw in enumerate(levels):
+        for ci, dc in enumerate(levels):
+            crashes, done, seed = 0, 0, HEATMAP_SEED_BASE + (wi * n + ci) * 1000
+            while done < per_cell:
                 seed += 1
                 try:
                     track = make_track_axes(seed, dw, dc, CANONICAL_TRACK,
@@ -161,25 +163,26 @@ def run_heatmap(path: str, out_png: str | None = None) -> None:
                 r = run_episode(genome[None, :], track, config)
                 crashes += bool(r.crashed[0])
                 done += 1
-            crash[wi, ci] = crashes / HEATMAP_TRACKS_PER_CELL
-        print(f"  width row d_width={dw:.1f} done")
+            crash[wi, ci] = crashes / per_cell
+        print(f"  width row d_width={dw:.2f} done")
 
-    print(f"\ncrash-rate heatmap for {path}")
+    print(f"\ncrash-rate heatmap for {path}  ({per_cell} tracks/cell)")
     print("  rows = d_width (corridor narrowness), cols = d_curve (corner sharpness)")
-    header = "            " + "  ".join(f"c={c:.1f}" for c in HEATMAP_LEVELS)
+    header = "             " + "  ".join(f"c={c:.2f}" for c in levels)
     print(header)
-    for wi, dw in enumerate(HEATMAP_LEVELS):
-        cells = "  ".join(f"{crash[wi, ci]:>5.0%}" for ci in range(n))
-        print(f"  w={dw:.1f}   {cells}")
+    for wi, dw in enumerate(levels):
+        cells = "  ".join(f"{crash[wi, ci]:>6.0%}" for ci in range(n))
+        print(f"  w={dw:.2f}   {cells}")
 
     if out_png:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(6.5, 5.5))
-        im = ax.imshow(crash, origin="lower", cmap="RdYlGn_r", vmin=0, vmax=1)
-        ax.set_xticks(range(n), [f"{c:.1f}" for c in HEATMAP_LEVELS])
-        ax.set_yticks(range(n), [f"{w:.1f}" for w in HEATMAP_LEVELS])
+        vmax = max(0.25, float(np.nanmax(crash)))  # don't wash out small rates
+        im = ax.imshow(crash, origin="lower", cmap="RdYlGn_r", vmin=0, vmax=vmax)
+        ax.set_xticks(range(n), [f"{c:.2f}" for c in levels])
+        ax.set_yticks(range(n), [f"{w:.2f}" for w in levels])
         ax.set_xlabel("d_curve (corner sharpness)")
         ax.set_ylabel("d_width (corridor narrowness)")
         ax.set_title("champion crash rate by difficulty axis")
@@ -200,12 +203,21 @@ def main() -> None:
     ap.add_argument("--json", dest="json_path", default=None,
                     help="also dump raw results as JSON")
     ap.add_argument("--heatmap", action="store_true",
-                    help="6x6 width-vs-curvature crash diagnosis instead of suites")
+                    help="width-vs-curvature crash diagnosis instead of suites")
+    ap.add_argument("--heatmap-levels", default=None,
+                    help="comma-separated axis levels (default 0..1 in 0.2 steps); "
+                         "zoom in when the champion is too good for the full grid")
+    ap.add_argument("--heatmap-per-cell", type=int, default=HEATMAP_TRACKS_PER_CELL,
+                    help="tracks per cell — size to the effect: detecting an 8%% "
+                         "rate needs ~50+, not 10")
     args = ap.parse_args()
 
     if args.heatmap:
+        levels = (tuple(float(x) for x in args.heatmap_levels.split(","))
+                  if args.heatmap_levels else HEATMAP_LEVELS)
         for path in args.checkpoints:
-            run_heatmap(path, out_png=path.replace(".npz", "_heatmap.png"))
+            run_heatmap(path, out_png=path.replace(".npz", "_heatmap.png"),
+                        levels=levels, per_cell=args.heatmap_per_cell)
         return
 
     results = [score_checkpoint(path, args.suite) for path in args.checkpoints]
