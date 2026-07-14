@@ -13,8 +13,9 @@ that can race tracks it has never seen.
 
 ```bash
 python3 play.py                          # drive a random track yourself (arrows)
-python3 train.py --run-name demo         # train a population (headless, ~30 min)
+python3 train.py --run-name demo         # train a population (headless, ~1 h)
 python3 watch.py --champion runs/demo/champion_best_val.npz   # watch it drive unseen tracks
+python3 evaluate.py runs/demo/champion_best_val.npz  # honest score: frozen test bank
 python3 plot_curves.py runs/demo         # learning curves -> runs/demo/curves.png
 python3 -m pytest                        # test suite
 ```
@@ -94,11 +95,22 @@ comes from three mechanisms in `train.py`:
   radius 86 px vs. corner radii down to ~35 px), so braking must be learned.
   Difficulty is sampled from a trailing band so easy tracks stay in the mix.
 - **Held-out validation.** 10 fixed tracks (seeds 10000–10009, difficulty
-  ladder 0.3 → 1.0) are never trained on. Every 10 generations the champion
-  is examined on them, and checkpoints are kept for the best *validation*
-  score — the standard train/validation split from supervised learning,
-  transplanted to evolution. If train fitness rises while validation stalls,
-  you are watching overfitting happen in `plot_curves.py`.
+  ladder 0.3 → 1.0) are never trained on. Every 10 generations the top-5
+  train genomes are raced on them and the checkpoint keeps the best
+  *worst-case* performer (in quarter-lap buckets, mean deciding ties —
+  raw argmax over a few noisy tracks is a lottery, the "winner's curse").
+- **A frozen TEST bank** (`evaluate.py`, 125 tracks, seeds 20000+). The
+  validation set drives checkpointing 30+ times per run, so selecting on it
+  slowly overfits it too. The test bank is used for selection exactly zero
+  times: those are the honest numbers. This project's own history is the
+  cautionary tale — the first champion scored "9.6 laps" on validation but
+  crashed on 92% of max-difficulty test tracks.
+- **Curriculum overshoot.** Training difficulty runs past 1.0 (to 1.3), so
+  the d=1.0 evaluation point sits *inside* the training distribution —
+  models are reliable where they interpolate, unreliable where they
+  extrapolate. Combined with the long-range forward rays (perception
+  horizon > braking distance) and risk-sensitive CVaR fitness, this took the
+  max-difficulty test crash rate from 92% to 8%.
 
 ### Why it's fast: vectorize across models, not just data
 
