@@ -88,6 +88,22 @@ acceptable.
 Gate: replicated baseline table with error bars; heatmap identifies the
 dominant failure axis.
 
+**Sprint-1 status: DONE (2026-07-14).** Results:
+- Baseline (3 seeds, decision suite): primary 8.765 ± 0.043 mean laps
+  (d ≥ 0.9); d=1.0 crash 4.0% ± 1.7%. Test bank (sprint-end report):
+  5.3% ± 6.1% at d=1.0, primary 8.954 ± 0.106.
+- Heatmap diagnosis: failures live on the corridor-NARROWNESS axis
+  (w=0.70 row clean even at max curvature) → Sprint 2 should weight
+  lateral information, not just forward braking cues.
+- Found & fixed en route: the 10-track validation ladder (2 hard tracks)
+  was a champion lottery — every replicate seed locked in a fragile
+  gen-60-90 champion (42-65% true crash) wearing perfect val stats.
+  Ladder is now 50 stratified tracks (15 at d=1.0); champions archived
+  per round for offline re-selection. Fixing selection alone moved the
+  method from 52% ± 12% to 4.0% ± 1.7% d=1.0 crash. Also: heatmap needed
+  zooming (10 tracks/cell cannot see an 8% effect) — resolution must
+  match effect size.
+
 ## Sprint 2 — Smarter cars (heatmap-guided; A/Bs on shared seeds)
 
 **2a. Delta-ray observations (time-to-collision)** — *if the heatmap
