@@ -135,6 +135,10 @@ def _sense_and_assemble(state: SimState, track: Track, config: Config,
 
     prev = None
     if sc.delta_rays:
+        if state.ray_hist is None:
+            raise RuntimeError(
+                "delta_rays config requires init_ray_history(state, ...) before "
+                "stepping — run_episode() does this automatically")
         # Copy, not a view: for idx=None `ray_hist[hist_pos][:]` is a view of
         # the slot we overwrite on the next line, which would zero every
         # closure rate in the full-population path (and silently diverge from

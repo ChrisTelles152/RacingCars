@@ -47,6 +47,8 @@ def make_spec(brain_cfg: BrainConfig, sensor_cfg: SensorConfig) -> BrainSpec:
     n_rays = len(sensor_cfg.ray_angles_deg)
     if sensor_cfg.delta_rays and sensor_cfg.capacity_control:
         raise ValueError("delta_rays and capacity_control are mutually exclusive")
+    if sensor_cfg.delta_rays and sensor_cfg.delta_stride < 1:
+        raise ValueError("delta_stride must be >= 1")
     augmented = sensor_cfg.delta_rays or sensor_cfg.capacity_control
     n_in = n_rays * (2 if augmented else 1) + 1
     return BrainSpec(n_in=n_in, hidden=brain_cfg.hidden)
