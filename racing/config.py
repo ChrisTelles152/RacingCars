@@ -90,6 +90,23 @@ class SensorConfig:
     ray_length: float = 300.0   # px, fallback range when ray_lengths is None
     n_samples: int = 36         # S: samples marched along each ray (grid lookup)
 
+    # --- observation augmentation (Sprint 2 experiments; default off) ---
+    # Delta-rays: append each ray's CLOSURE RATE (this step's reading minus
+    # the reading delta_stride steps ago, times delta_gain). Distance alone
+    # makes the world partially observed — "wall 40px ahead" means something
+    # different at 300px/s than at 80px/s; the closure rate restores the
+    # missing velocity, i.e. time-to-collision. Doubles the ray inputs.
+    delta_rays: bool = False
+    delta_stride: int = 4       # steps between the two snapshots (>1: one-step
+                                # deltas sit at the sensor quantization floor)
+    delta_gain: float = 8.0     # scale so typical closure rates land in tanh's
+                                # responsive band rather than near zero
+    # Capacity control for the delta-ray A/B: append DUPLICATED current rays
+    # instead of closure rates — identical input width and genome size, zero
+    # new information. Delta-rays must beat THIS to prove the info helped
+    # rather than just the extra parameters. Mutually exclusive with delta_rays.
+    capacity_control: bool = False
+
 
 @dataclass(frozen=True)
 class BrainConfig:

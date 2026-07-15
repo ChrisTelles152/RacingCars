@@ -33,6 +33,7 @@ import time
 
 import numpy as np
 
+from experiments import VARIANTS, apply_variant
 from racing.brain import init_population, make_spec
 from racing.config import Config
 from racing.evolution import next_generation, sigma_at
@@ -117,9 +118,11 @@ def main() -> None:
                     help="difficulty used with --fixed-track-seed")
     ap.add_argument("--fitness-agg", choices=["mean", "min", "cvar"], default=None,
                     help="override how per-track fitness aggregates (config: cvar)")
+    ap.add_argument("--variant", default="baseline", choices=sorted(VARIANTS),
+                    help="named experiment config variant (experiments.py)")
     args = ap.parse_args()
 
-    config = Config()
+    config = apply_variant(Config(), args.variant)
     if args.seed is not None:
         config = dataclasses.replace(config, seed=args.seed)
     if args.population is not None:
