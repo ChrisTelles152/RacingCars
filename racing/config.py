@@ -58,6 +58,25 @@ class TrackConfig:
     pinch_skip: int = 30            # index distance that counts as non-adjacent
     max_attempts: int = 50
 
+    # --- variable corridor width (Sprint 3; default OFF) ---
+    # Fractional width modulation via a loop-periodic Fourier profile:
+    # w(s) = half_width * (1 + amp(d) * f(s)), amp(d) = width_profile_amp *
+    # min(d, 1). Wide sections pinching into narrow ones is a strictly richer
+    # corner vocabulary than any constant-width knob — and a policy trained
+    # only on constant width implicitly learns "walls are equidistant".
+    # Default 0.0 keeps every existing track (and frozen suite) bit-identical.
+    width_profile_amp: float = 0.0
+    width_profile_terms: int = 3
+
+    # --- straight-into-hairpin traps (Sprint 3; default OFF) ---
+    # With probability trap_prob * ramp(d) (ramp reaches 1 at d=0.9), rewrite
+    # a few control points into a long straight feeding a near-limit corner —
+    # the exact pattern that kills champions, promoted from rare accident to
+    # curriculum regular (hard-example mining in the task generator). The
+    # validity checks still veto anything undrivable, so trap sharpness
+    # settles at the hardest *accepted* geometry.
+    trap_prob: float = 0.0
+
 
 @dataclass(frozen=True)
 class CarConfig:

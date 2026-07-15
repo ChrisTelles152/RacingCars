@@ -45,7 +45,16 @@ VARIANTS: dict[str, "callable"] = {
     # Sprint 3): evolution tunes its own step size instead of the decay clock.
     "sigma": lambda c: dataclasses.replace(
         c, evo=dataclasses.replace(c.evo, self_adaptive_sigma=True)),
+    # Sprint 3: variable corridor width (pinches) in training tracks.
+    "width": lambda c: _track(c, width_profile_amp=0.3),
+    # Sprint 3: straight-into-hairpin traps in training tracks.
+    "traps": lambda c: _track(c, trap_prob=0.7),
 }
+
+
+def _track(config: Config, **kw) -> Config:
+    return dataclasses.replace(
+        config, track=dataclasses.replace(config.track, **kw))
 
 
 def apply_variant(config: Config, name: str) -> Config:

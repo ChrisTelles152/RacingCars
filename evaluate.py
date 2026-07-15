@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 
 import numpy as np
@@ -52,6 +53,19 @@ SUITE_SPECS: dict[str, list[tuple[int, float]]] = {
                  for di, d in enumerate((0.3, 0.5, 0.7, 0.9))
                  for i in range(25)]
                 + [(45_000 + i, 1.0) for i in range(200)],
+    # Sprint-3 capability suites: same difficulty labels, richer generators.
+    "width": [(30_000 + i, 0.9) for i in range(25)]
+             + [(30_500 + i, 1.0) for i in range(25)],
+    "trap": [(31_000 + i, 0.9) for i in range(25)]
+            + [(31_500 + i, 1.0) for i in range(25)],
+}
+
+# Per-suite generator config (the capability being measured lives here).
+SUITE_TRACK: dict[str, TrackConfig] = {
+    "test": CANONICAL_TRACK,
+    "decision": CANONICAL_TRACK,
+    "width": dataclasses.replace(CANONICAL_TRACK, width_profile_amp=0.3),
+    "trap": dataclasses.replace(CANONICAL_TRACK, trap_prob=1.0),
 }
 
 HEATMAP_SEED_BASE = 25_000   # heatmap cells draw from this reserved range
@@ -62,11 +76,25 @@ _track_cache: dict = {}
 
 
 def build_suite(name: str, car_radius: float) -> list:
-    """The frozen tracks of a suite, for a given car radius (cached)."""
+    """The frozen tracks of a suite, for a given car radius (cached).
+
+    Every suite track must generate at exactly its labeled difficulty: the
+    generator silently backs off difficulty when a seed can't satisfy the
+    validity checks, and a benchmark quietly easier than its label would
+    corrupt every number derived from it — so a backoff here is an error.
+    """
     key = (name, float(car_radius))
     if key not in _track_cache:
-        _track_cache[key] = [make_track(seed, d, CANONICAL_TRACK, car_radius)
-                             for seed, d in SUITE_SPECS[name]]
+        tracks = []
+        for seed, d in SUITE_SPECS[name]:
+            t = make_track(seed, d, SUITE_TRACK[name], car_radius)
+            if abs(t.difficulty - d) > 1e-9:
+                raise RuntimeError(
+                    f"suite {name!r} seed {seed} generated at difficulty "
+                    f"{t.difficulty:.2f} instead of {d:.2f} — the suite "
+                    f"definition needs recalibrating, not silent acceptance")
+            tracks.append(t)
+        _track_cache[key] = tracks
     return _track_cache[key]
 
 

@@ -60,8 +60,10 @@ class Viewer:
         # Faint centerline checkpoints + a start/finish line.
         for p in self.w2s(track.centerline[::8]):
             surf.set_at((int(p[0]), int(p[1])), CENTER)
-        a = self.w2s(track.centerline[0] + track.normals[0] * track.half_width)
-        b = self.w2s(track.centerline[0] - track.normals[0] * track.half_width)
+        hw0 = (track.half_widths[0] if track.half_widths is not None
+               else track.half_width)  # local width at the start line
+        a = self.w2s(track.centerline[0] + track.normals[0] * hw0)
+        b = self.w2s(track.centerline[0] - track.normals[0] * hw0)
         pygame.draw.line(surf, START, a, b, 2)
         return surf
 

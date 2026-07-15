@@ -36,7 +36,7 @@ from .config import TrackConfig
 class Track:
     seed: int
     difficulty: float
-    half_width: float
+    half_width: float        # nominal (base) corridor half-width
     centerline: np.ndarray   # (M, 2) float32, equally spaced along the loop
     tangents: np.ndarray     # (M, 2) float32, unit vectors along the track
     normals: np.ndarray      # (M, 2) float32, unit vectors across the track
@@ -46,6 +46,9 @@ class Track:
     occ_coll: np.ndarray     # (G, G) bool, True = crash if car *center* enters
     start_pos: np.ndarray    # (2,) float32
     start_heading: float
+    # Per-checkpoint half-widths (== half_width everywhere unless the
+    # variable-width profile is enabled).
+    half_widths: np.ndarray | None = None
 
     @property
     def n_checkpoints(self) -> int:
@@ -119,28 +122,93 @@ def _tangents_normals(centerline: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return tangents, normals
 
 
-def _min_curvature_radius(tangents: np.ndarray, step: float) -> float:
-    """Approximate the tightest corner: radius ≈ ds / dθ between checkpoints."""
+def _curvature_radii(tangents: np.ndarray, step: float) -> np.ndarray:
+    """Per-checkpoint corner radius ≈ ds / dθ between consecutive tangents."""
     dots = (tangents * np.roll(tangents, -1, axis=0)).sum(axis=1)
     dtheta = np.arccos(np.clip(dots, -1.0, 1.0))
     dtheta = np.maximum(dtheta, 1e-9)
-    return float((step / dtheta).min())
+    return step / dtheta
 
 
-def _has_pinch(centerline: np.ndarray, min_dist: float, skip: int) -> bool:
-    """True if two non-adjacent sections of track come closer than min_dist.
+def _min_curvature_radius(tangents: np.ndarray, step: float) -> float:
+    """The tightest corner on the track (kept for calibration scripts)."""
+    return float(_curvature_radii(tangents, step).min())
 
-    "Non-adjacent" = circular index distance > skip. O(M^2) but M is small
-    and this runs once per candidate track, not per simulation step.
+
+def _has_pinch(centerline: np.ndarray, half_widths: np.ndarray,
+               pinch_margin: float, skip: int) -> bool:
+    """True if two non-adjacent sections of track come too close.
+
+    "Too close" is width-aware: sections i and j pinch when their distance is
+    under pinch_margin * (w_i + w_j) / 2 — with a variable-width profile, two
+    WIDE sections can legally merge corridors at a spacing that would be fine
+    for narrow ones. "Non-adjacent" = circular index distance > skip. O(M^2)
+    but M is small and this runs once per candidate, not per sim step.
     """
     m = centerline.shape[0]
     diff = centerline[:, None, :] - centerline[None, :, :]
     d2 = (diff**2).sum(axis=2)
+    thr = pinch_margin * 0.5 * (half_widths[:, None] + half_widths[None, :])
     idx = np.arange(m)
     idx_dist = np.abs(idx[:, None] - idx[None, :])
     idx_dist = np.minimum(idx_dist, m - idx_dist)  # circular distance
     non_adjacent = idx_dist > skip
-    return bool((d2[non_adjacent] < min_dist**2).any())
+    return bool((d2[non_adjacent] < thr[non_adjacent] ** 2).any())
+
+
+def _width_profile(cum_s: np.ndarray, total: float, n_terms: int,
+                   rng: np.random.Generator) -> np.ndarray:
+    """Loop-periodic width modulation f(s) in [-1, 1].
+
+    A short Fourier series in arc length: sin(2πk·s/L) terms are periodic in
+    the lap by construction, so the corridor width closes smoothly on itself.
+    Random per-track amplitudes and phases (seeded) make each track's pinch
+    layout unique — one more thing a memorizing policy cannot rely on.
+    """
+    f = np.zeros_like(cum_s)
+    amps = rng.uniform(0.5, 1.0, n_terms) / np.arange(1, n_terms + 1)
+    phases = rng.uniform(0.0, 2.0 * np.pi, n_terms)
+    for k in range(n_terms):
+        f += amps[k] * np.sin(2.0 * np.pi * (k + 1) * cum_s / total + phases[k])
+    return f / max(1e-9, np.abs(f).max())
+
+
+# Trap shape constants (see the calibration note in _insert_trap).
+_TRAP_STRAIGHT = 1.9   # second straightened point, in units of segment length
+_TRAP_PULL_MAX = 0.55  # most savage inward pull attempted first
+_TRAP_PULL_MIN = 0.10  # gentlest pull the attempt ladder decays to
+
+
+def _insert_trap(control: np.ndarray, rng: np.random.Generator,
+                 center: float, severity: float) -> np.ndarray:
+    """Rewrite control points into a straight feeding a sharp corner.
+
+    Straightens two points onto the outgoing ray (the car reaches top speed),
+    then yanks the following point toward the track center (a near-limit
+    corner right where braking is most expensive).
+
+    `severity` in [0, 1] scales the pull. Calibration on dev seeds showed a
+    FIXED savage pull is rejected by the validity checks for 50-95% of seeds
+    (the spline amplifies the displacement into corners far below the
+    curvature-vs-width limit), so the caller decays severity across its
+    rejection-sampling attempts: each seed ends up with the hardest trap it
+    can geometrically support — "near the validity limit" by construction.
+    """
+    control = control.copy()
+    n = len(control)
+    i = int(rng.integers(0, n))
+    b, c = control[i % n], control[(i + 1) % n]
+    # Straighten ALONG the existing chord b->c (not some off-annulus ray):
+    # the straight then flows with the loop instead of fighting it, which is
+    # what keeps the surrounding corners inside the validity envelope.
+    d = c - b
+    seg = np.linalg.norm(d)
+    d = d / max(1e-9, seg)
+    control[(i + 2) % n] = c + d * (_TRAP_STRAIGHT - 1.0) * seg
+    pull = _TRAP_PULL_MIN + severity * (_TRAP_PULL_MAX - _TRAP_PULL_MIN)
+    p3 = control[(i + 3) % n]
+    control[(i + 3) % n] = p3 + pull * (np.array([center, center]) - p3)
+    return control
 
 
 def _disc_offsets(radius: float) -> np.ndarray:
@@ -151,15 +219,34 @@ def _disc_offsets(radius: float) -> np.ndarray:
     return np.stack([dx[mask], dy[mask]], axis=1).astype(np.int32)
 
 
+def _stamp(grid: np.ndarray, pts_int: np.ndarray, radius: float,
+           world_size: int) -> None:
+    """Carve discs of one radius at the given integer points (in place)."""
+    offsets = _disc_offsets(radius)  # (K, 2)
+    # Chunked so the (points x brush) index array stays modest in memory.
+    for start in range(0, len(pts_int), 256):
+        chunk = pts_int[start:start + 256]
+        cells = chunk[:, None, :] + offsets[None, :, :]  # (chunk, K, 2)
+        xs = np.clip(cells[..., 0], 0, world_size - 1)
+        ys = np.clip(cells[..., 1], 0, world_size - 1)
+        grid[ys, xs] = False
+
+
 def _rasterize_corridor(
     centerline: np.ndarray, cum_s: np.ndarray, total: float,
-    radius: float, world_size: int,
+    radius: float | np.ndarray, world_size: int,
 ) -> np.ndarray:
     """Stamp the drivable corridor into a grid. True = wall, False = drivable.
 
     We walk the loop at 2 px spacing and stamp a disc of the corridor radius
     at each step. Overlapping stamps leave a scallop depth of s^2/(8r) — a
     tiny fraction of a pixel at 2 px spacing — so the corridor edge is smooth.
+
+    `radius` may be a scalar (one brush for the whole loop — the exact
+    original code path, so frozen suites stay bit-identical) or a
+    per-checkpoint array (variable width): then the brush radius is
+    interpolated along the loop and quantized to 0.5 px buckets so stamping
+    stays a handful of vectorized passes instead of thousands.
     """
     grid = np.ones((world_size, world_size), dtype=bool)
 
@@ -169,17 +256,17 @@ def _rasterize_corridor(
     targets = np.arange(0.0, total, 2.0)
     px = np.interp(targets, closed_s, closed_pts[:, 0])
     py = np.interp(targets, closed_s, closed_pts[:, 1])
-    pts = np.stack([px, py], axis=1)
+    pts_int = np.round(np.stack([px, py], axis=1)).astype(np.int32)
 
-    offsets = _disc_offsets(radius)  # (K, 2)
-    pts_int = np.round(pts).astype(np.int32)
-    # Chunked so the (points x brush) index array stays modest in memory.
-    for start in range(0, len(pts_int), 256):
-        chunk = pts_int[start:start + 256]
-        cells = chunk[:, None, :] + offsets[None, :, :]  # (chunk, K, 2)
-        xs = np.clip(cells[..., 0], 0, world_size - 1)
-        ys = np.clip(cells[..., 1], 0, world_size - 1)
-        grid[ys, xs] = False
+    if np.isscalar(radius) or np.ndim(radius) == 0:
+        _stamp(grid, pts_int, float(radius), world_size)
+        return grid
+
+    closed_r = np.concatenate([radius, radius[:1]])
+    r_dense = np.interp(targets, closed_s, closed_r)
+    r_bucket = np.round(r_dense * 2.0) / 2.0  # 0.5 px brush quantization
+    for r in np.unique(r_bucket):
+        _stamp(grid, pts_int[r_bucket == r], float(r), world_size)
     return grid
 
 
@@ -257,7 +344,11 @@ def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
     jitter = _knob(cfg.radial_jitter_easy, cfg.radial_jitter_hard,
                    cfg.radial_jitter_extreme, d_curve, cfg.max_difficulty)
     center = cfg.world_size / 2.0
-    margin = half_width + 2.0
+
+    # Feature knobs scaled by difficulty (both default 0.0 = feature off; no
+    # RNG is drawn for an off feature, so pre-feature tracks stay identical).
+    width_amp = cfg.width_profile_amp * min(d_width, 1.0)
+    trap_p = cfg.trap_prob * float(np.clip((difficulty - 0.5) / 0.4, 0.0, 1.0))
 
     for attempt in range(cfg.max_attempts):
         rng = np.random.default_rng(rng_seed + 100_003 * attempt)
@@ -268,27 +359,50 @@ def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
                   + rng.uniform(-cfg.angle_jitter, cfg.angle_jitter, n_control) * spacing)
         radii = cfg.base_radius * (1.0 + rng.uniform(-jitter, jitter, n_control))
         control = center + np.stack([radii * np.cos(angles), radii * np.sin(angles)], axis=1)
+        if trap_p > 0.0 and rng.random() < trap_p:
+            # Severity decays over the first 20 attempts, then stays at the
+            # gentlest setting: savage traps first (each seed keeps the
+            # hardest trap it can support), with a long gentle tail so
+            # generation reliably converges.
+            severity = max(0.0, 1.0 - attempt / 20.0)
+            control = _insert_trap(control, rng, center, severity)
 
         # 2-3. Smooth closed spline, re-spaced to equal arc-length checkpoints.
         dense = _catmull_rom_closed(control, cfg.samples_per_segment)
         centerline, cum_s, total = _resample_arclength(dense, cfg.n_checkpoints)
         tangents, normals = _tangents_normals(centerline)
 
-        # 4. Validity checks (reject and re-roll on failure).
-        if centerline.min() < margin or centerline.max() > cfg.world_size - margin:
+        # Per-checkpoint corridor widths (constant unless the profile is on).
+        if width_amp > 0.0:
+            profile = _width_profile(cum_s, total, cfg.width_profile_terms, rng)
+            half_widths = half_width * (1.0 + width_amp * profile)
+        else:
+            half_widths = np.full(cfg.n_checkpoints, half_width)
+
+        # 4. Validity checks (reject and re-roll on failure) — all width-aware.
+        margin_pts = half_widths + 2.0
+        if ((centerline.min(axis=1) < margin_pts).any()
+                or (centerline.max(axis=1) > cfg.world_size - margin_pts).any()):
             continue  # walls would leave the grid
         step = total / cfg.n_checkpoints
-        if _min_curvature_radius(tangents, step) < cfg.min_radius_margin * half_width:
-            continue  # a corner is too tight for the corridor width
-        if _has_pinch(centerline, cfg.pinch_margin * half_width, cfg.pinch_skip):
+        if (_curvature_radii(tangents, step)
+                < cfg.min_radius_margin * half_widths).any():
+            continue  # a corner is too tight for the LOCAL corridor width
+        if (half_widths - car_radius).min() < 5.0:
+            continue  # narrowest section leaves the car < 5 px of slack
+        if _has_pinch(centerline, half_widths, cfg.pinch_margin, cfg.pinch_skip):
             continue  # two sections of track overlap/pinch
 
-        occ_sensor = _rasterize_corridor(centerline, cum_s, total, half_width, cfg.world_size)
+        # Scalar brush when the width is constant — the exact original code
+        # path, byte-identical grids for every pre-feature track and suite.
+        rast_w = half_widths if width_amp > 0.0 else half_width
+        rast_c = (half_widths - car_radius if width_amp > 0.0
+                  else half_width - car_radius)
+        occ_sensor = _rasterize_corridor(centerline, cum_s, total, rast_w, cfg.world_size)
         # Collision grid is inflated by the car radius ("configuration space"):
         # testing the car's center against it equals testing the car's disc
         # against the true walls — one array lookup instead of corner math.
-        occ_coll = _rasterize_corridor(centerline, cum_s, total,
-                                       half_width - car_radius, cfg.world_size)
+        occ_coll = _rasterize_corridor(centerline, cum_s, total, rast_c, cfg.world_size)
 
         return Track(
             seed=rng_seed, difficulty=difficulty, half_width=float(half_width),
@@ -299,6 +413,7 @@ def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
             occ_sensor=occ_sensor, occ_coll=occ_coll,
             start_pos=centerline[0].astype(np.float32),
             start_heading=float(np.arctan2(tangents[0, 1], tangents[0, 0])),
+            half_widths=half_widths.astype(np.float32),
         )
 
     return None  # every candidate rejected; make_track handles the backoff

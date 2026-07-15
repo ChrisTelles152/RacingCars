@@ -250,3 +250,65 @@ def test_progress_window_outruns_top_speed(track):
     spacing = track.total_length / track.n_checkpoints
     window_reach = SIM_CFG.progress_window_fwd * spacing
     assert max_step_dist < window_reach
+
+
+# ---------------------------------------------------------------------------
+# Sprint-3 generator features: variable width + hairpin traps
+# ---------------------------------------------------------------------------
+
+import dataclasses
+import hashlib
+
+from racing.track import make_track as _mk
+
+
+def _track_hash(t):
+    return hashlib.sha256(t.centerline.tobytes() + t.occ_sensor.tobytes()
+                          + t.occ_coll.tobytes()).hexdigest()[:16]
+
+
+def test_golden_hashes_features_off():
+    """With width/trap features at their defaults (off), the generator must
+    reproduce PRE-FEATURE tracks bit-for-bit: every frozen suite and every
+    old checkpoint's world depends on it. These hashes were recorded from
+    the generator before the features existed."""
+    golden = [("d0269f49f37795d4", 7, 0.0), ("61bdd872507440ca", 7, 0.5),
+              ("93af6ac4f617f31c", 13, 1.0), ("6c3dc0d3e6bda412", 20004, 1.0)]
+    cfg = TrackConfig()
+    for want, seed, d in golden:
+        assert _track_hash(_mk(seed, d, cfg, 6.0)) == want, (seed, d)
+
+
+def test_width_profile_varies_and_respects_bounds():
+    """The width profile must actually vary the corridor (else the feature is
+    dead), stay within +-amp of nominal, and every section must leave the car
+    at least the traversability slack the validity check promises."""
+    cfg = dataclasses.replace(TrackConfig(), width_profile_amp=0.3)
+    t = _mk(29100, 1.0, cfg, 6.0)
+    assert t.half_widths.std() > 0.5           # it varies
+    assert t.half_widths.min() >= t.half_width * 0.7 - 1e-6
+    assert t.half_widths.max() <= t.half_width * 1.3 + 1e-6
+    assert (t.half_widths - 6.0).min() >= 5.0  # traversability floor
+    # deterministic
+    t2 = _mk(29100, 1.0, cfg, 6.0)
+    np.testing.assert_array_equal(t.half_widths, t2.half_widths)
+    np.testing.assert_array_equal(t.occ_sensor, t2.occ_sensor)
+
+
+def test_constant_width_track_has_uniform_half_widths():
+    """With the profile off, half_widths must equal the scalar everywhere —
+    downstream code may consult either representation."""
+    t = _mk(7, 0.5, TrackConfig(), 6.0)
+    np.testing.assert_allclose(t.half_widths, t.half_width, rtol=1e-6)
+
+
+def test_trap_track_changes_geometry_and_is_deterministic():
+    """Trap insertion must produce a different (but still valid) track at its
+    labeled difficulty, deterministically per seed."""
+    cfg = dataclasses.replace(TrackConfig(), trap_prob=1.0)
+    plain = _mk(29200, 1.0, TrackConfig(), 6.0)
+    trapped = _mk(29200, 1.0, cfg, 6.0)
+    assert not np.array_equal(plain.centerline, trapped.centerline)
+    assert trapped.difficulty == 1.0  # generated at its label, no backoff
+    again = _mk(29200, 1.0, cfg, 6.0)
+    np.testing.assert_array_equal(trapped.centerline, again.centerline)
