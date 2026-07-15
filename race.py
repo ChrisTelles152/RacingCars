@@ -36,9 +36,12 @@ def main() -> None:
 
     loaded = [load_genome(p) for p in args.champions]
     base_config = loaded[0][1]
-    # Same world required; the master seed is training history, not physics.
+    # Same world required; the master seed is training history, not physics,
+    # and heat_size is overridden by the race itself.
     def world(cfg):
-        return dataclasses.replace(cfg, seed=0).to_json()
+        return dataclasses.replace(
+            cfg, seed=0,
+            sim=dataclasses.replace(cfg.sim, heat_size=0)).to_json()
     for path, (_, cfg, _) in zip(args.champions, loaded):
         if world(cfg) != world(base_config):
             raise SystemExit(f"{path}: config differs — racers must share a world")
