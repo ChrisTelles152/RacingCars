@@ -294,7 +294,11 @@ def main() -> None:
             n_cand = min(tr.champion_candidates, len(fitness))
             cand_idx = np.argsort(-fitness)[:n_cand]
             cand = genomes[cand_idx]  # (N, G): one batched episode per val track
-            val_fits = np.stack([run_episode(cand, vt, config).fitness
+            # Validation always measures SOLO driving, even when training
+            # runs multi-car heats (and N candidates rarely fill a heat).
+            val_config = dataclasses.replace(
+                config, sim=dataclasses.replace(config.sim, heat_size=0))
+            val_fits = np.stack([run_episode(cand, vt, val_config).fitness
                                  for vt in val_tracks])          # (V, N)
             cand_min = val_fits.min(axis=0)
             cand_mean = val_fits.mean(axis=0)
