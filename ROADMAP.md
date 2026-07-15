@@ -247,3 +247,22 @@ suite; ship `--ensemble` only if it wins there.
   frozen test bank, 25000+ heatmap cells, 29000+ generator dev, 30000+ width
   suite, 31000+ trap suite, 41000+/45000+ decision suite, 101-103 shared
   training seeds. Frozen suites never change; new capabilities get new suites.
+
+## Program completion status (2026-07-15)
+
+Sprints 3-4, all deferred items, and the Sprint-2 leftover: DONE. Full
+ledger in README.md. Headlines:
+- **Flagship = precision rays + variable-width training** (the width-101/
+  102/103 runs; no separate retrain needed — the arm IS the config).
+  Frozen test bank: **0.0% crash at every difficulty**, primary 8.93 ± 0.05.
+  The d=1.0 arc across the program: 92% → 8% → 4% → 1.8% → 0%.
+- 2 ships / 10 kills. Gap measurement before building killed two redundant
+  arms (traps, and almost obstacles); capacity controls and paired seeds
+  attributed every result. Negative results are documented as results.
+- Known blind spot: mid-corridor obstacles (97% crash) — the follow-up is
+  a perception change (denser forward fan / proximity channel), not more
+  training. Second follow-up: sighted grip sensing to get ice mastery
+  without the blind-caution tax.
+- New tools shipped along the way: race.py (exhibition heats),
+  ensemble.py, finetune_es.py, experiments.py variant registry,
+  A/B queue automation.

@@ -181,6 +181,29 @@ Two worked examples from this repo's own history, both counterintuitive:
   that needs position precision. More features is not always better, and a
   capacity control is how you tell.
 
+## The experiment ledger (what was actually tried)
+
+Every arm below ran as a 3-seed paired A/B through the gate. Two shipped;
+ten died — each kill with a lesson. The flagship (sharp side rays +
+variable-width training) crashes on **0% of the frozen test bank** including
+maximum difficulty; the first champion generation crashed on 92%.
+
+| Arm | Verdict | The lesson |
+|---|---|---|
+| Precision side rays | **SHIP** | Sensor resolution must match the tolerance being judged; a config one-liner halved hard-track crashes |
+| Variable-width training | **SHIP** | Task-distribution diversity: fixed a 32%-crash world-family hole for a ~3% speed tax; margin-keeping even transferred to ice (21%→12%) unprompted |
+| Delta-ray closure inputs | KILL | More information can hurt; the capacity control proved the info (not the params) was the problem |
+| Self-adaptive sigma | KILL | Sigma collapse: myopic selection anneals exploration away 10x too fast |
+| Physics randomization | KILL | Clean null — the failures were never physics-brittleness |
+| Low-grip zones (blind) | KILL | Total ice mastery (21%→0% crash) bought with ~1 lap of *global* caution: invisible hazards price in everywhere |
+| Hairpin traps | (no arm) | Measured first: the incumbent already drove traps at 0% crash — no gap, no experiment |
+| Recurrent memory | KILL | Memory wasn't the missing ingredient; untargeted capacity again |
+| Chicane obstacles | KILL | Real capability gain (96%→76%) but unachieved + a −1.7 lap caution tax; needs perception, not exposure |
+| Island populations | KILL | Flat on capability, best-in-program safety (0.3% crash) — diversity preserves robustness, doesn't add skill |
+| Champion ensembling | KILL | Same-distribution champions fail identically; nothing to decorrelate |
+| ES fine-tuning | KILL | Noisy per-iteration objective = noise-dominated gradient; a converged champion has nothing to polish, only robustness to lose |
+| Multi-car training | KILL (solo) | −0.79 laps solo; but its champions sweep the podium when races turn to carnage — robustness vs pace, quantified |
+
 ## Experiments to try
 
 Each of these is a one-line change in `racing/config.py`, a `--variant` in
