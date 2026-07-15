@@ -195,6 +195,11 @@ class TrainConfig:
     # tail event that mean-fitness never punishes.
     fitness_agg: str = "cvar"       # 'mean' | 'min' | 'cvar'
     cvar_frac: float = 0.5          # with K=3: mean of the worst 2 tracks
+    # Domain randomization over DYNAMICS (default off): each training episode
+    # scales accel/drag/steer_rate/v_max by U(1-band, 1+band). A policy that
+    # cannot rely on exact physics learns margins instead of memorized braking
+    # points — the sim2real workhorse. Evaluation always runs nominal physics.
+    physics_rand: float = 0.0
     # Curriculum: difficulty d ratchets up as the population gets good.
     # Per-track difficulty is sampled from the trailing band [d - band, d]
     # so easy tracks stay in the mix (no catastrophic forgetting).

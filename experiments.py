@@ -49,6 +49,9 @@ VARIANTS: dict[str, "callable"] = {
     "width": lambda c: _track(c, width_profile_amp=0.3),
     # Sprint 3: straight-into-hairpin traps in training tracks.
     "traps": lambda c: _track(c, trap_prob=0.7),
+    # Sprint 3: domain randomization over dynamics during training.
+    "physrand": lambda c: dataclasses.replace(
+        c, train=dataclasses.replace(c.train, physics_rand=0.15)),
 }
 
 

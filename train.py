@@ -76,9 +76,38 @@ def champion_key(val_min: float, val_mean: float) -> tuple[float, float]:
     return (float(np.floor(val_min / CHAMPION_MIN_BUCKET)), val_mean)
 
 
-def evaluate(genomes: np.ndarray, tracks: list[Track], config: Config):
-    """Aggregated fitness over tracks (P,), plus stats for logging."""
-    results = [run_episode(genomes, t, config) for t in tracks]
+def physics_variants(config: Config, k: int,
+                     rng: np.random.Generator) -> list[Config] | None:
+    """Per-episode physics for domain randomization (None = feature off).
+
+    Draws come from their OWN RNG stream so enabling the feature never
+    desynchronizes the track sequence between experiment arms (the paired
+    design depends on identical tracks).
+    """
+    band = config.train.physics_rand
+    if band <= 0.0:
+        return None
+    variants = []
+    for _ in range(k):
+        m = rng.uniform(1.0 - band, 1.0 + band, 4)
+        variants.append(dataclasses.replace(config, car=dataclasses.replace(
+            config.car, accel=config.car.accel * m[0],
+            drag=config.car.drag * m[1],
+            steer_rate=config.car.steer_rate * m[2],
+            v_max=config.car.v_max * m[3])))
+    return variants
+
+
+def evaluate(genomes: np.ndarray, tracks: list[Track], config: Config,
+             ep_configs: list[Config] | None = None):
+    """Aggregated fitness over tracks (P,), plus stats for logging.
+
+    ep_configs optionally overrides physics per episode (domain
+    randomization); observation normalization follows each episode's own
+    config, so the cars' world stays self-consistent.
+    """
+    cfgs = ep_configs if ep_configs is not None else [config] * len(tracks)
+    results = [run_episode(genomes, t, c) for t, c in zip(tracks, cfgs)]
     per_track = np.stack([r.fitness for r in results])
     fitness = aggregate_fitness(per_track, config.train.fitness_agg,
                                 config.train.cvar_frac)
@@ -152,10 +181,19 @@ def main() -> None:
 
     # Independent RNG streams from one master seed: results stay reproducible
     # and changing e.g. mutation draws can never silently reshuffle the tracks.
-    init_ss, mut_ss, track_ss = np.random.SeedSequence(config.seed).spawn(3)
+    # spawn() is incremental, so adding the 4th (physics) stream leaves the
+    # first three exactly as they were — old runs stay reproducible and
+    # experiment arms stay paired on identical track sequences.
+    init_ss, mut_ss, track_ss, phys_ss = np.random.SeedSequence(config.seed).spawn(4)
     init_rng = np.random.default_rng(init_ss)
     mut_rng = np.random.default_rng(mut_ss)
     track_rng = np.random.default_rng(track_ss)
+    phys_rng = np.random.default_rng(phys_ss)
+    if config.train.physics_rand > 0.0:
+        # Randomized top speed must still fit the progress-search window.
+        v_worst = config.car.v_max * (1.0 + config.train.physics_rand)
+        assert v_worst * config.car.dt < 15.0, \
+            "physics_rand pushes per-step travel beyond the progress window"
 
     spec = make_spec(config.brain, config.sensor)
     genomes = init_population(config.evo.population, spec, init_rng,
@@ -213,8 +251,11 @@ def main() -> None:
             tracks = [make_track(s, d, config.track, config.car.car_radius)
                       for s, d in zip(seeds, diffs)]
 
+        ep_configs = None
+        if not fixed_mode:
+            ep_configs = physics_variants(config, len(tracks), phys_rng)
         (fitness, steps, alive_rate, crash_rate, best_laps,
-         crash_hist) = evaluate(genomes, tracks, config)
+         crash_hist) = evaluate(genomes, tracks, config, ep_configs)
         median_fit = float(np.median(fitness))
 
         # Curriculum: promote when the median car is competent for a streak

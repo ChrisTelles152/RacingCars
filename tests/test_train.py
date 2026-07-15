@@ -138,3 +138,31 @@ def test_paired_t_known_cases():
     assert sig3
     _, _, sig4 = paired_t(np.array([-0.2, -0.2, -0.2]))
     assert not sig4
+
+
+def test_physics_variants_band_and_determinism():
+    """Domain-randomized episode configs must stay inside the +-band, come
+    from their own seeded stream (paired arms depend on it), and band=0 must
+    draw NOTHING (feature-off runs must be bit-identical to pre-feature ones).
+    """
+    import dataclasses
+    from racing.config import Config
+    from train import physics_variants
+
+    base = Config()
+    on = dataclasses.replace(base, train=dataclasses.replace(
+        base.train, physics_rand=0.15))
+    rng = np.random.default_rng(9)
+    variants = physics_variants(on, 3, rng)
+    assert len(variants) == 3
+    for v in variants:
+        for attr in ("accel", "drag", "steer_rate", "v_max"):
+            ratio = getattr(v.car, attr) / getattr(base.car, attr)
+            assert 0.85 - 1e-9 <= ratio <= 1.15 + 1e-9
+    # seeded determinism
+    v2 = physics_variants(on, 3, np.random.default_rng(9))
+    assert v2[0].car.accel == variants[0].car.accel
+    # feature off -> None and, critically, no RNG consumed
+    rng3 = np.random.default_rng(9)
+    assert physics_variants(base, 3, rng3) is None
+    assert rng3.uniform() == np.random.default_rng(9).uniform()
