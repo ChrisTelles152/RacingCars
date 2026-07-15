@@ -41,6 +41,10 @@ VARIANTS: dict[str, "callable"] = {
     # where position precision was needed. Kept for reproducibility/teaching.
     "delta": lambda c: _sensor(c, delta_rays=True),
     "deltacap": lambda c: _sensor(c, capacity_control=True),
+    # Self-adaptive per-genome mutation strength (Sprint-2 leftover, run in
+    # Sprint 3): evolution tunes its own step size instead of the decay clock.
+    "sigma": lambda c: dataclasses.replace(
+        c, evo=dataclasses.replace(c.evo, self_adaptive_sigma=True)),
 }
 
 

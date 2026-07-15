@@ -251,3 +251,65 @@ def test_heavy_tail_scales_perturbation_std():
     assert ratio == pytest.approx(cfg_heavy.heavy_tail_scale, rel=0.20)
     # Sanity: the plain run's perturbations are at the base sigma scale.
     assert out_plain.std() == pytest.approx(0.1, rel=0.15)
+
+
+# ---------------------------------------------------------------------------
+# self-adaptive sigma (strategy self-adaptation)
+# ---------------------------------------------------------------------------
+
+import dataclasses
+
+from racing.config import EvoConfig
+from racing.evolution import next_generation_self_adaptive
+
+SA_CFG = dataclasses.replace(EvoConfig(), population=16, elite=3,
+                             self_adaptive_sigma=True)
+
+
+def _sa_setup(seed=0):
+    rng = np.random.default_rng(seed)
+    genomes = rng.normal(0, 1, (16, 20)).astype(np.float32)
+    sigmas = rng.uniform(0.05, 0.3, 16).astype(np.float32)
+    fitness = rng.normal(0, 1, 16).astype(np.float32)
+    return genomes, sigmas, fitness
+
+
+def test_sa_elites_keep_genome_and_sigma():
+    """Elitism must preserve BOTH the genome and its strategy parameter —
+    losing a good sigma is losing part of what selection learned."""
+    genomes, sigmas, fitness = _sa_setup()
+    new_g, new_s = next_generation_self_adaptive(
+        genomes, sigmas, fitness, SA_CFG, np.random.default_rng(1))
+    order = np.argsort(-fitness)
+    np.testing.assert_array_equal(new_g[:3], genomes[order[:3]])
+    np.testing.assert_array_equal(new_s[:3], sigmas[order[:3]])
+
+
+def test_sa_shapes_clip_and_determinism():
+    """Child sigmas must stay inside [sigma_min, sigma_max] (a runaway sigma
+    destroys its lineage before selection can react), shapes must be
+    preserved, and the operator must be deterministic under a seed."""
+    genomes, sigmas, fitness = _sa_setup()
+    g1, s1 = next_generation_self_adaptive(
+        genomes, sigmas, fitness, SA_CFG, np.random.default_rng(2))
+    g2, s2 = next_generation_self_adaptive(
+        genomes, sigmas, fitness, SA_CFG, np.random.default_rng(2))
+    assert g1.shape == genomes.shape and s1.shape == sigmas.shape
+    assert s1.dtype == np.float32
+    assert np.all(s1 >= SA_CFG.sigma_min) and np.all(s1 <= SA_CFG.sigma_max)
+    np.testing.assert_array_equal(g1, g2)
+    np.testing.assert_array_equal(s1, s2)
+
+
+def test_sa_sigma_evolves_lognormally_around_parent():
+    """With tau > 0, child sigmas should scatter multiplicatively around the
+    inherited value — the mechanism selection exploits to tune step size."""
+    genomes, sigmas, fitness = _sa_setup()
+    sigmas[:] = 0.1  # every parent identical -> children's spread is pure tau
+    cfg = dataclasses.replace(SA_CFG, sigma_tau=0.3, crossover_rate=0.0,
+                              mutation_prob=0.0)
+    _, new_s = next_generation_self_adaptive(
+        genomes, sigmas, fitness, cfg, np.random.default_rng(3))
+    kids = new_s[cfg.elite:]
+    assert kids.std() > 0.01          # they scatter...
+    assert 0.07 < np.median(kids) < 0.14  # ...around the inherited 0.1

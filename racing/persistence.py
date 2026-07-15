@@ -65,6 +65,9 @@ class MetricsLogger:
         # where on the track cars crashed: 10-bin histogram over lap
         # fraction (";"-joined counts) — the cheap failure-mode diagnostic
         "crash_hist",
+        # 90th-percentile of the population's evolved per-genome sigma
+        # (self-adaptive mode only; the sigma column then holds the mean)
+        "sigma_p90",
     ]
 
     def __init__(self, path: str):

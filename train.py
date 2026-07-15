@@ -36,7 +36,8 @@ import numpy as np
 from experiments import VARIANTS, apply_variant
 from racing.brain import init_population, make_spec
 from racing.config import Config
-from racing.evolution import next_generation, sigma_at
+from racing.evolution import (next_generation, next_generation_self_adaptive,
+                              sigma_at)
 from racing.persistence import MetricsLogger, save_genome
 from racing.simulation import run_episode
 from racing.track import Track, make_track
@@ -185,10 +186,19 @@ def main() -> None:
     gens_below_bar = 0  # consecutive generations below the promote threshold
     best_val = (-np.inf, -np.inf)       # champion_key of the saved checkpoint
     best_val_stats = (-np.inf, -np.inf)  # its raw (val_min, val_mean), for logs
+    sigmas = None  # per-genome sigmas, allocated lazily in self-adaptive mode
 
     for gen in range(tr.generations):
         t0 = time.perf_counter()
-        sigma = sigma_at(gen, config.evo)
+        # Scheduled sigma (classic mode) or the population's own evolved
+        # sigmas (self-adaptive mode; `sigma` then reports their mean).
+        if config.evo.self_adaptive_sigma:
+            if sigmas is None:
+                sigmas = np.full(config.evo.population, config.evo.sigma_init,
+                                 dtype=np.float32)
+            sigma = float(sigmas.mean())
+        else:
+            sigma = sigma_at(gen, config.evo)
 
         if fixed_mode:
             tracks = [fixed_track]
@@ -254,6 +264,8 @@ def main() -> None:
             val_gap = float(fitness[champ_idx] - val_mean)
             meta = {"generation": gen, "train_fitness": float(fitness[champ_idx]),
                     "val_mean": val_mean, "val_min": val_min, "difficulty": difficulty}
+            if sigmas is not None:
+                meta["sigma"] = float(sigmas[champ_idx])
             save_genome(os.path.join(run_dir, "champion_latest.npz"),
                         genomes[champ_idx], config, meta)
             # Archive every round's pick: enables offline re-selection with a
@@ -295,12 +307,18 @@ def main() -> None:
             val_gap=val_gap and round(val_gap, 4),
             realized_ds=";".join(f"{t.difficulty:.2f}" for t in tracks),
             crash_hist=";".join(str(int(c)) for c in crash_hist),
+            sigma_p90=(round(float(np.percentile(sigmas, 90)), 4)
+                       if sigmas is not None else ""),
         )
         print(f"gen {gen:4d}  d={difficulty:.2f}  best {fitness.max():6.3f}  "
               f"median {median_fit:6.3f}  crash {crash_rate*100:3.0f}%  "
               f"sigma {sigma:.3f}  {wall:5.1f}s")
 
-        genomes = next_generation(genomes, fitness, config.evo, mut_rng, sigma)
+        if config.evo.self_adaptive_sigma:
+            genomes, sigmas = next_generation_self_adaptive(
+                genomes, sigmas, fitness, config.evo, mut_rng)
+        else:
+            genomes = next_generation(genomes, fitness, config.evo, mut_rng, sigma)
 
     print(f"done. outputs in {run_dir}/")
     if not fixed_mode:

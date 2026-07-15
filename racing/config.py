@@ -136,6 +136,15 @@ class EvoConfig:
     heavy_tail_prob: float = 0.10   # some children mutate much harder:
     heavy_tail_scale: float = 5.0   # a cheap escape hatch from local optima
     init_scale: float = 1.0         # multiplier on N(0, 1/sqrt(fan_in)) init
+    # Self-adaptive mutation (Rechenberg/Schwefel): each genome carries its
+    # OWN sigma, inherited from its parent and perturbed log-normally —
+    # selection tunes the step size instead of a hand-written clock schedule
+    # (which is nearly frozen by the time the curriculum gets hard, whether
+    # or not the population still needs exploration there).
+    self_adaptive_sigma: bool = False
+    sigma_tau: float = 0.2          # log-normal perturbation strength
+    sigma_min: float = 0.005
+    sigma_max: float = 0.5
 
 
 @dataclass(frozen=True)

@@ -46,6 +46,49 @@ def tournament_select(fitness: np.ndarray, k: int, n_picks: int,
     return cand[np.arange(n_picks), fitness[cand].argmax(axis=1)]
 
 
+def next_generation_self_adaptive(
+        genomes: np.ndarray, sigmas: np.ndarray, fitness: np.ndarray,
+        cfg: EvoConfig, rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Breed with EVOLVED per-genome mutation strength (strategy self-adaptation).
+
+    Each genome carries its own sigma. A child inherits parent A's sigma,
+    first perturbs it log-normally (sigma * exp(tau * N(0,1)), clipped), then
+    mutates its genes with that OWN sigma. Selection never scores sigma
+    directly — but genomes whose step size fits the local landscape produce
+    fitter children, so good sigmas hitchhike. That's meta-learning in a
+    dozen lines: watch the population's sigma anneal itself, and re-inflate
+    after curriculum promotions when exploration pays again.
+
+    No heavy-tail kicks here: sigma DIVERSITY across the population plays
+    that role (some lineages always run hot).
+    """
+    pop, n_genes = genomes.shape
+    order = np.argsort(-fitness)
+    elite = genomes[order[:cfg.elite]].copy()
+    elite_sigma = sigmas[order[:cfg.elite]].copy()
+
+    n_children = pop - cfg.elite
+    pa_idx = tournament_select(fitness, cfg.tournament_k, n_children, rng)
+    pb_idx = tournament_select(fitness, cfg.tournament_k, n_children, rng)
+
+    is_crossed = rng.random(n_children) < cfg.crossover_rate
+    from_b = rng.random((n_children, n_genes)) < 0.5
+    children = np.where(is_crossed[:, None] & from_b,
+                        genomes[pb_idx], genomes[pa_idx])
+
+    child_sigma = sigmas[pa_idx] * np.exp(
+        cfg.sigma_tau * rng.standard_normal(n_children)).astype(np.float32)
+    np.clip(child_sigma, cfg.sigma_min, cfg.sigma_max, out=child_sigma)
+
+    mutate = rng.random((n_children, n_genes)) < cfg.mutation_prob
+    noise = rng.standard_normal((n_children, n_genes)).astype(np.float32)
+    children = children + mutate * noise * child_sigma[:, None]
+
+    return (np.vstack([elite, children]).astype(np.float32),
+            np.concatenate([elite_sigma, child_sigma]).astype(np.float32))
+
+
 def next_generation(genomes: np.ndarray, fitness: np.ndarray,
                     cfg: EvoConfig, rng: np.random.Generator,
                     sigma: float) -> np.ndarray:
