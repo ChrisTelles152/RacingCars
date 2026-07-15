@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .brain import BrainSpec, forward, make_spec
+from .brain import BrainSpec, forward, forward_recurrent, make_spec
 from .car import step_cars
 from .config import Config
 from .sensors import ray_geometry, sense
@@ -55,6 +55,8 @@ class SimState:
     # unless config.sensor.delta_rays. hist_pos points at the oldest slot.
     ray_hist: np.ndarray | None = None
     hist_pos: int = 0
+    # Recurrent hidden state (P, hidden); None unless the brain is recurrent.
+    h: np.ndarray | None = None
     # Populated by run_episode for observers (viewers draw sensor rays etc.).
     last_obs: np.ndarray | None = None
     last_controls: np.ndarray | None = None
@@ -184,11 +186,24 @@ def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainS
         alive_idx = np.flatnonzero(state.alive)
         if alive_idx.size == pop:
             obs = _sense_and_assemble(state, track, config, rays, idx=None)
-            controls = forward(genomes, obs, spec)
+            if spec.recurrent:
+                controls, state.h = forward_recurrent(genomes, obs, state.h, spec)
+            else:
+                controls = forward(genomes, obs, spec)
         else:
             obs = _sense_and_assemble(state, track, config, rays, idx=alive_idx)
             controls = np.zeros((pop, 2), dtype=np.float32)
-            controls[alive_idx] = forward(genomes[alive_idx], obs[alive_idx], spec)
+            if spec.recurrent:
+                # Gather/compute/scatter only living rows: a dead car's h is
+                # frozen (never read again), and living cars' rows evolve
+                # identically to the full-width path — batch-independence.
+                c, h_new = forward_recurrent(genomes[alive_idx],
+                                             obs[alive_idx],
+                                             state.h[alive_idx], spec)
+                controls[alive_idx] = c
+                state.h[alive_idx] = h_new
+            else:
+                controls[alive_idx] = forward(genomes[alive_idx], obs[alive_idx], spec)
     else:
         obs = build_obs(state, track, config, rays)
     step_cars(state.pos, state.heading, state.speed, state.alive, controls, config.car)
@@ -248,6 +263,8 @@ def run_episode(genomes: np.ndarray, track: Track, config: Config,
 
     state = init_state(genomes.shape[0], track)
     init_ray_history(state, track, config, rays)
+    if spec.recurrent:
+        state.h = np.zeros((genomes.shape[0], spec.hidden), dtype=np.float32)
     while state.t < max_steps and state.alive.any():
         step(state, track, genomes, spec, config, rays)
         if on_step is not None and on_step(state) is False:

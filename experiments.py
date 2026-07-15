@@ -52,6 +52,14 @@ VARIANTS: dict[str, "callable"] = {
     # Sprint 3: domain randomization over dynamics during training.
     "physrand": lambda c: dataclasses.replace(
         c, train=dataclasses.replace(c.train, physics_rand=0.15)),
+    # Deferred item: Elman recurrent hidden layer (memory). Genome grows by
+    # hidden^2 = 256; if this WINS its A/B, a capacity control must confirm
+    # the memory (not the parameters) did it — the delta-ray lesson.
+    "recurrent": lambda c: dataclasses.replace(
+        c, brain=dataclasses.replace(c.brain, recurrent=True)),
+    # Deferred item: island model (diversity by structure).
+    "islands": lambda c: dataclasses.replace(
+        c, evo=dataclasses.replace(c.evo, islands=4)),
 }
 
 

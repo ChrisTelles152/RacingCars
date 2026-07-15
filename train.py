@@ -36,8 +36,9 @@ import numpy as np
 from experiments import VARIANTS, apply_variant
 from racing.brain import init_population, make_spec
 from racing.config import Config
-from racing.evolution import (next_generation, next_generation_self_adaptive,
-                              sigma_at)
+from racing.evolution import (island_diversity, next_generation,
+                              next_generation_islands,
+                              next_generation_self_adaptive, sigma_at)
 from racing.persistence import MetricsLogger, save_genome
 from racing.simulation import run_episode
 from racing.track import Track, make_track
@@ -358,6 +359,15 @@ def main() -> None:
         if config.evo.self_adaptive_sigma:
             genomes, sigmas = next_generation_self_adaptive(
                 genomes, sigmas, fitness, config.evo, mut_rng)
+        elif config.evo.islands > 1:
+            migrate = (gen % config.evo.migrate_every
+                       == config.evo.migrate_every - 1)
+            genomes = next_generation_islands(genomes, fitness, config.evo,
+                                              mut_rng, sigma, migrate)
+            if migrate:
+                w, a = island_diversity(genomes, config.evo.islands, mut_rng)
+                print(f"  ~~ islands: within-dist {w:.1f}, across-dist {a:.1f}"
+                      f" (across >> within = visible speciation)")
         else:
             genomes = next_generation(genomes, fitness, config.evo, mut_rng, sigma)
 

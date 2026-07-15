@@ -34,10 +34,13 @@ class BrainSpec:
     n_in: int
     hidden: int
     n_out: int = N_OUTPUTS
+    recurrent: bool = False  # adds an evolved hidden->hidden W_rec
 
     @property
     def genome_size(self) -> int:
-        return self.n_in * self.hidden + self.hidden + self.hidden * self.n_out + self.n_out
+        rec = self.hidden * self.hidden if self.recurrent else 0
+        return (self.n_in * self.hidden + self.hidden + rec
+                + self.hidden * self.n_out + self.n_out)
 
 
 def make_spec(brain_cfg: BrainConfig, sensor_cfg: SensorConfig) -> BrainSpec:
@@ -51,18 +54,30 @@ def make_spec(brain_cfg: BrainConfig, sensor_cfg: SensorConfig) -> BrainSpec:
         raise ValueError("delta_stride must be >= 1")
     augmented = sensor_cfg.delta_rays or sensor_cfg.capacity_control
     n_in = n_rays * (2 if augmented else 1) + 1
-    return BrainSpec(n_in=n_in, hidden=brain_cfg.hidden)
+    return BrainSpec(n_in=n_in, hidden=brain_cfg.hidden,
+                     recurrent=brain_cfg.recurrent)
 
 
 def unpack(genomes: np.ndarray, spec: BrainSpec):
-    """Zero-copy views of the flat (P, G) genome matrix as weight tensors."""
+    """Zero-copy views of the flat (P, G) genome matrix as weight tensors.
+
+    Layout: [W_in, b1, (W_rec if recurrent), W_out, b2]. Returns 4 or 5
+    tensors accordingly.
+    """
     p = genomes.shape[0]
     i, h, o = spec.n_in, spec.hidden, spec.n_out
     a = i * h
     b = a + h
-    c = b + h * o
     w1 = genomes[:, :a].reshape(p, i, h)
     b1 = genomes[:, a:b]
+    if spec.recurrent:
+        c = b + h * h
+        d = c + h * o
+        w_rec = genomes[:, b:c].reshape(p, h, h)
+        w2 = genomes[:, c:d].reshape(p, h, o)
+        b2 = genomes[:, d:]
+        return w1, b1, w_rec, w2, b2
+    c = b + h * o
     w2 = genomes[:, b:c].reshape(p, h, o)
     b2 = genomes[:, c:]
     return w1, b1, w2, b2
@@ -75,9 +90,26 @@ def forward(genomes: np.ndarray, obs: np.ndarray, spec: BrainSpec) -> np.ndarray
     'pi,pih->ph' means: for each population member p, contract its input
     vector with its personal weight matrix — a batched matrix-vector product.
     """
+    if spec.recurrent:
+        raise ValueError("recurrent spec: use forward_recurrent (needs h state)")
     w1, b1, w2, b2 = unpack(genomes, spec)
     h = np.tanh(np.einsum("pi,pih->ph", obs, w1) + b1)
     return np.tanh(np.einsum("ph,pho->po", h, w2) + b2)
+
+
+def forward_recurrent(genomes: np.ndarray, obs: np.ndarray, h_prev: np.ndarray,
+                      spec: BrainSpec) -> tuple[np.ndarray, np.ndarray]:
+    """Elman step: the hidden layer hears its own previous activation.
+
+        h_t = tanh(W_in x_t + W_rec h_{t-1} + b);  out = tanh(W_out h_t + b2)
+
+    Returns (controls (P, 2), h_t (P, hidden)) — the caller owns the state.
+    Evolution treats W_rec like any other genes; no backprop through time.
+    """
+    w1, b1, w_rec, w2, b2 = unpack(genomes, spec)
+    h = np.tanh(np.einsum("pi,pih->ph", obs, w1)
+                + np.einsum("ph,phk->pk", h_prev, w_rec) + b1)
+    return np.tanh(np.einsum("ph,pho->po", h, w2) + b2), h.astype(np.float32)
 
 
 def init_population(pop: int, spec: BrainSpec, rng: np.random.Generator,
@@ -89,7 +121,12 @@ def init_population(pop: int, spec: BrainSpec, rng: np.random.Generator,
     rather than every net saturated at ±1 doing the same thing.
     """
     genomes = np.empty((pop, spec.genome_size), dtype=np.float32)
-    w1, b1, w2, b2 = unpack(genomes, spec)
+    views = unpack(genomes, spec)
+    if spec.recurrent:
+        w1, b1, w_rec, w2, b2 = views
+        w_rec[:] = rng.normal(0.0, scale / np.sqrt(spec.hidden), w_rec.shape)
+    else:
+        w1, b1, w2, b2 = views
     w1[:] = rng.normal(0.0, scale / np.sqrt(spec.n_in), w1.shape)
     b1[:] = 0.0
     w2[:] = rng.normal(0.0, scale / np.sqrt(spec.hidden), w2.shape)

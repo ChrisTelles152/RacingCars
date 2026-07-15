@@ -137,6 +137,13 @@ class BrainConfig:
     # Fixed topology MLP: (n_rays + 1 speed input) -> hidden -> 2, tanh both
     # layers. Deliberately tiny: small nets mutate well and generalize better.
     hidden: int = 16
+    # Elman recurrence (default off): the hidden layer also receives its own
+    # previous activation through an evolved W_rec — h_t = tanh(W_in x_t +
+    # W_rec h_{t-1} + b). A reactive policy is capped when state is hidden
+    # (POMDP); memory lets the net integrate history. Neuroevolution trains
+    # recurrent nets exactly like feedforward ones — no backprop through
+    # time, the genome just grows by hidden^2 weights.
+    recurrent: bool = False
 
 
 @dataclass(frozen=True)
@@ -164,6 +171,14 @@ class EvoConfig:
     sigma_tau: float = 0.2          # log-normal perturbation strength
     sigma_min: float = 0.005
     sigma_max: float = 0.5
+    # Island model (default off): partition the population into `islands`
+    # sub-populations that evolve independently, with the best few genomes
+    # migrating around a ring every migrate_every generations. Diversity by
+    # STRUCTURE — separated gene pools drift apart (allopatric divergence),
+    # so one driving style cannot take over the whole population.
+    islands: int = 1
+    migrate_every: int = 25
+    migrants: int = 2
 
 
 @dataclass(frozen=True)

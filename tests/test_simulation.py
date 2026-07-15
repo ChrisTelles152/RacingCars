@@ -274,3 +274,43 @@ def test_delta_obs_width_and_capacity_control():
 
 
 RAYS_DELTA = ray_geometry(DELTA_CONFIG.sensor)
+
+
+# ---------------------------------------------------------------------------
+# recurrent (Elman) brains
+# ---------------------------------------------------------------------------
+
+from racing.brain import forward_recurrent  # noqa: E402
+
+REC_CONFIG = dataclasses.replace(
+    CONFIG, brain=dataclasses.replace(CONFIG.brain, recurrent=True))
+REC_SPEC = make_spec(REC_CONFIG.brain, REC_CONFIG.sensor)
+
+
+def test_recurrent_genome_size_and_forward_shapes():
+    """W_rec adds hidden^2 genes; the recurrent step must return controls in
+    [-1,1] and a bounded hidden state the caller threads forward."""
+    assert REC_SPEC.genome_size == SPEC.genome_size + REC_SPEC.hidden ** 2
+    genomes = init_population(4, REC_SPEC, np.random.default_rng(0))
+    obs = np.random.default_rng(1).uniform(0, 1, (4, REC_SPEC.n_in)).astype(np.float32)
+    h0 = np.zeros((4, REC_SPEC.hidden), dtype=np.float32)
+    ctrl, h1 = forward_recurrent(genomes, obs, h0, REC_SPEC)
+    assert ctrl.shape == (4, 2) and h1.shape == (4, REC_SPEC.hidden)
+    assert np.all(np.abs(ctrl) < 1.0) and np.all(np.abs(h1) < 1.0)
+    # memory actually matters: a different h_prev changes the output
+    ctrl2, _ = forward_recurrent(genomes, obs, h1, REC_SPEC)
+    assert not np.array_equal(ctrl, ctrl2)
+
+
+def test_recurrent_batch_independence():
+    """Same invariant as delta-rays: with the alive-subset optimization
+    gathering/scattering h rows, a car's episode must not depend on its
+    batch — if a dead neighbor's stale h ever leaked into a living car's
+    update, fitness would become batch-dependent."""
+    track = make_track(seed=13, difficulty=0.6, cfg=REC_CONFIG.track,
+                       car_radius=REC_CONFIG.car.car_radius)
+    genomes = init_population(24, REC_SPEC, np.random.default_rng(5))
+    batch = run_episode(genomes, track, REC_CONFIG)
+    for i in (0, 9, 23):
+        solo = run_episode(genomes[i:i + 1], track, REC_CONFIG)
+        assert solo.fitness[0] == batch.fitness[i], f"car {i} batch-dependent"

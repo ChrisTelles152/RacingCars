@@ -313,3 +313,54 @@ def test_sa_sigma_evolves_lognormally_around_parent():
     kids = new_s[cfg.elite:]
     assert kids.std() > 0.01          # they scatter...
     assert 0.07 < np.median(kids) < 0.14  # ...around the inherited 0.1
+
+
+# ---------------------------------------------------------------------------
+# island model
+# ---------------------------------------------------------------------------
+
+from racing.evolution import island_diversity, next_generation_islands
+
+ISL_CFG = dataclasses.replace(EvoConfig(), population=16, elite=4, islands=4,
+                              migrants=1)
+
+
+def test_islands_breed_independently_and_preserve_shape():
+    """Each island's elite must come from ITS OWN members (separated gene
+    pools are the whole point), and shapes must be preserved."""
+    rng = np.random.default_rng(0)
+    genomes = rng.normal(0, 1, (16, 10)).astype(np.float32)
+    fitness = rng.normal(0, 1, 16).astype(np.float32)
+    new = next_generation_islands(genomes, fitness, ISL_CFG,
+                                  np.random.default_rng(1), 0.1, migrate=False)
+    assert new.shape == genomes.shape
+    size = 4
+    for i in range(4):
+        island_fit = fitness[i * size:(i + 1) * size]
+        best = genomes[i * size + int(island_fit.argmax())]
+        np.testing.assert_array_equal(new[i * size], best)  # per-island elite
+
+
+def test_islands_migration_copies_ring_neighbors_best():
+    """On migration generations the source island's best genome must appear
+    in the NEXT island's tail — gene flow around the ring, nowhere else."""
+    rng = np.random.default_rng(2)
+    genomes = rng.normal(0, 1, (16, 10)).astype(np.float32)
+    fitness = np.arange(16, dtype=np.float32)  # island 3 holds the global best
+    new = next_generation_islands(genomes, fitness, ISL_CFG,
+                                  np.random.default_rng(3), 0.1, migrate=True)
+    size = 4
+    for i in range(4):
+        src_best = genomes[i * size + 3]  # fitness ascending within island
+        dst = (i + 1) % 4
+        np.testing.assert_array_equal(new[dst * size + size - 1], src_best)
+
+
+def test_island_diversity_reports_two_scales():
+    """Sanity: with islands seeded at different offsets, across-island
+    distance must exceed within-island distance."""
+    rng = np.random.default_rng(4)
+    blocks = [rng.normal(loc, 0.01, (4, 10)) for loc in (0, 5, 10, 15)]
+    genomes = np.vstack(blocks).astype(np.float32)
+    w, a = island_diversity(genomes, 4, np.random.default_rng(5))
+    assert a > w * 3

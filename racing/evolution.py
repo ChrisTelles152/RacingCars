@@ -89,6 +89,59 @@ def next_generation_self_adaptive(
             np.concatenate([elite_sigma, child_sigma]).astype(np.float32))
 
 
+def next_generation_islands(genomes: np.ndarray, fitness: np.ndarray,
+                            cfg: EvoConfig, rng: np.random.Generator,
+                            sigma: float, migrate: bool) -> np.ndarray:
+    """Breed each island separately; occasionally migrate champions ring-wise.
+
+    Selection, elitism, and crossover all stay WITHIN an island — separated
+    gene pools drift into different driving styles (metapopulation dynamics),
+    which preserves the raw material selection needs when the curriculum
+    turns hard. On migration generations, each island's current best
+    `migrants` genomes replace the newest children of the next island around
+    the ring — enough gene flow to spread genuine breakthroughs, little
+    enough to keep the pools distinct.
+    """
+    import dataclasses
+    pop = genomes.shape[0]
+    k = cfg.islands
+    if pop % k:
+        raise ValueError(f"population {pop} not divisible into {k} islands")
+    size = pop // k
+    island_cfg = dataclasses.replace(cfg, elite=max(1, cfg.elite // k))
+
+    parts = [next_generation(genomes[i * size:(i + 1) * size],
+                             fitness[i * size:(i + 1) * size],
+                             island_cfg, rng, sigma) for i in range(k)]
+    if migrate:
+        for i in range(k):
+            src = slice(i * size, (i + 1) * size)
+            best = np.argsort(-fitness[src])[:cfg.migrants]
+            dst = (i + 1) % k
+            # overwrite the destination island's LAST rows (children, never
+            # its own elites at the head)
+            parts[dst][-cfg.migrants:] = genomes[src][best]
+    return np.vstack(parts)
+
+
+def island_diversity(genomes: np.ndarray, k: int,
+                     rng: np.random.Generator) -> tuple[float, float]:
+    """(mean within-island, mean across-island) genome distance, sampled.
+
+    Visible speciation = across staying well above within. Cheap sampled
+    estimate, for logging only.
+    """
+    pop = genomes.shape[0]
+    size = pop // k
+    within, across = [], []
+    for _ in range(64):
+        i, j = rng.integers(0, pop, 2)
+        d = float(np.linalg.norm(genomes[i] - genomes[j]))
+        (within if i // size == j // size else across).append(d)
+    return (float(np.mean(within)) if within else 0.0,
+            float(np.mean(across)) if across else 0.0)
+
+
 def next_generation(genomes: np.ndarray, fitness: np.ndarray,
                     cfg: EvoConfig, rng: np.random.Generator,
                     sigma: float) -> np.ndarray:
