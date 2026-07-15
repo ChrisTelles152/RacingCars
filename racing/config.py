@@ -211,6 +211,13 @@ class SimConfig:
     stall_check_every: int = 120  # steps (4 sim-seconds)
     stall_min_progress: float = 2.0  # px
     crash_penalty: float = 0.02   # fitness penalty (in lap fractions)
+    # Multi-car heats (default off = ghost cars). heat_size N > 0 partitions
+    # the population into groups of N that spawn on a staggered grid, SENSE
+    # each other (a car reads as a wall on the rays — same observation
+    # width, so solo-trained champions can race unmodified), and crash on
+    # contact (both cars). Difficulty now comes from other drivers, not just
+    # the track — the door to autocurricula.
+    heat_size: int = 0
 
 
 @dataclass(frozen=True)

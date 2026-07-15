@@ -47,10 +47,14 @@ def main() -> None:
     ap.add_argument("--suite", default="decision")
     args = ap.parse_args()
 
+    import dataclasses
     loaded = [load_genome(p) for p in args.members]
     config = loaded[0][1]
+
+    def world(cfg):  # the master seed is training history, not physics
+        return dataclasses.replace(cfg, seed=0).to_json()
     for path, (_, cfg, _) in zip(args.members, loaded):
-        if cfg.to_json() != config.to_json():
+        if world(cfg) != world(config):
             raise SystemExit(f"{path} has a different config than the first "
                              f"member — ensemble members must share a world")
     members = np.stack([g for g, _, _ in loaded])

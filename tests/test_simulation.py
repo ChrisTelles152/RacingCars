@@ -314,3 +314,53 @@ def test_recurrent_batch_independence():
     for i in (0, 9, 23):
         solo = run_episode(genomes[i:i + 1], track, REC_CONFIG)
         assert solo.fitness[0] == batch.fitness[i], f"car {i} batch-dependent"
+
+
+# ---------------------------------------------------------------------------
+# multi-car heats
+# ---------------------------------------------------------------------------
+
+HEAT_CONFIG = dataclasses.replace(
+    CONFIG, sim=dataclasses.replace(CONFIG.sim, heat_size=4))
+
+
+def test_heat_spawn_grid_no_contact():
+    """The staggered grid must spawn every car clear of its heat-mates —
+    starting inside a rival is a crash before the race begins."""
+    from racing.simulation import _car_contacts
+    state = init_state(8, TRACK, heat_size=4)
+    assert not _car_contacts(state.pos, 4, CONFIG.car.car_radius).any()
+    # back rows start slightly behind the line: progress <= front row's
+    assert state.progress.min() < state.progress.max() + 1e-6
+    assert state.alive.all()
+
+
+def test_car_contact_crashes_both():
+    """Contact between two living cars must crash them both — collision is
+    symmetric, and the physics freeze then keeps them as wreckage."""
+    state = init_state(4, TRACK, heat_size=4)
+    state.pos[1] = state.pos[0] + np.array([CONFIG.car.car_radius, 0.0],
+                                           dtype=np.float32)  # overlapping
+    controls = np.zeros((4, 2), dtype=np.float32)
+    step(state, TRACK, None, SPEC, HEAT_CONFIG, RAYS, controls=controls)
+    assert state.crashed[0] and state.crashed[1]
+    assert not state.crashed[2] and not state.crashed[3]
+
+
+def test_rays_see_a_heatmate_as_wall():
+    """A rival parked dead ahead must shorten the forward ray reading —
+    that is the only channel through which cars perceive each other."""
+    from racing.simulation import _sense_other_cars
+    state = init_state(4, TRACK, heat_size=4)
+    # place car 1 exactly 60 px ahead of car 0 along its heading
+    fwd = np.array([np.cos(state.heading[0]), np.sin(state.heading[0])])
+    state.pos[1] = state.pos[0] + (60.0 * fwd).astype(np.float32)
+    state.pos[2] += 300.0  # move the others far away
+    state.pos[3] += 300.0
+    rel, ts, lengths = RAYS
+    car_d = _sense_other_cars(state, 4, rel, lengths, CONFIG.car.car_radius)
+    i0 = list(CONFIG.sensor.ray_angles_deg).index(0.0)
+    expected = (60.0 - 2 * CONFIG.car.car_radius) / lengths[i0]
+    assert abs(car_d[0, i0] - expected) < 0.02
+    # the car behind reads nothing ahead of it from car 0's rear
+    assert car_d[1, i0] == 1.0

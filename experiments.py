@@ -64,6 +64,10 @@ VARIANTS: dict[str, "callable"] = {
     "lowgrip": lambda c: _track(c, grip_zones=2),
     # Deferred item: chicane cones stamped into the corridor.
     "obstacles": lambda c: _track(c, obstacles=3),
+    # Deferred item (endpoint of the environment axis): heats of 8 that
+    # sense and collide with each other — difficulty from other drivers.
+    "multicar": lambda c: dataclasses.replace(
+        c, sim=dataclasses.replace(c.sim, heat_size=8)),
 }
 
 

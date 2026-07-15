@@ -62,18 +62,49 @@ class SimState:
     last_controls: np.ndarray | None = None
 
 
-def init_state(pop: int, track: Track) -> SimState:
-    """Everyone starts at the start line, pointed along the track, at rest."""
+def init_state(pop: int, track: Track, heat_size: int = 0) -> SimState:
+    """Spawn the field.
+
+    Ghost mode (heat_size=0): everyone at the start line, superimposed —
+    cars don't interact, so sharing a point is fine and keeps comparisons
+    fair. Heat mode: a staggered starting grid (rows of two, offset back
+    along the track and laterally) so cars don't begin inside each other.
+    """
+    if heat_size <= 0:
+        pos = np.tile(track.start_pos, (pop, 1)).astype(np.float32)
+        heading = np.full(pop, track.start_heading, dtype=np.float32)
+        cl_idx = np.zeros(pop, dtype=np.int32)
+        laps = np.zeros(pop, dtype=np.int32)
+        progress = np.zeros(pop, dtype=np.float32)
+    else:
+        if pop % heat_size:
+            raise ValueError(f"population {pop} not divisible into heats of {heat_size}")
+        m = track.n_checkpoints
+        widths = (track.half_widths if track.half_widths is not None
+                  else np.full(m, track.half_width, dtype=np.float32))
+        j = np.arange(pop) % heat_size          # grid slot within the heat
+        ck = (-(j // 2) * 5) % m                # rows of 2, ~24 px apart
+        lateral = np.where(j % 2 == 0, -0.35, 0.35) * widths[ck]
+        pos = (track.centerline[ck]
+               + track.normals[ck] * lateral[:, None]).astype(np.float32)
+        heading = np.arctan2(track.tangents[ck, 1],
+                             track.tangents[ck, 0]).astype(np.float32)
+        cl_idx = ck.astype(np.int32)
+        # Rows behind the start line begin at slightly negative progress —
+        # that's just what a starting grid is.
+        laps = np.where(ck > m // 2, -1, 0).astype(np.int32)
+        progress = (laps * track.total_length
+                    + track.cum_s[ck]).astype(np.float32)
     return SimState(
-        pos=np.tile(track.start_pos, (pop, 1)).astype(np.float32),
-        heading=np.full(pop, track.start_heading, dtype=np.float32),
+        pos=pos,
+        heading=heading,
         speed=np.zeros(pop, dtype=np.float32),
         alive=np.ones(pop, dtype=bool),
         crashed=np.zeros(pop, dtype=bool),
-        cl_idx=np.zeros(pop, dtype=np.int32),
-        laps=np.zeros(pop, dtype=np.int32),
-        progress=np.zeros(pop, dtype=np.float32),
-        stall_ref=np.zeros(pop, dtype=np.float32),
+        cl_idx=cl_idx,
+        laps=laps,
+        progress=progress.copy() if heat_size > 0 else progress,
+        stall_ref=progress.copy(),
         steps_alive=np.zeros(pop, dtype=np.int32),
     )
 
@@ -93,6 +124,46 @@ def init_ray_history(state: SimState, track: Track, config: Config,
                   config.sensor, rel_angles, sample_ts, lengths)
     state.ray_hist = np.repeat(dists[None], config.sensor.delta_stride, axis=0)
     state.hist_pos = 0
+
+
+def _sense_other_cars(state: SimState, heat_size: int, rel_angles: np.ndarray,
+                      lengths: np.ndarray, car_radius: float) -> np.ndarray:
+    """(P, R) normalized ray distance to the nearest same-heat car.
+
+    Ray-circle intersection, vectorized per heat: with heats of H the tensor
+    is (heats, H, R, H) — tiny. Crashed cars stay on track as wreckage and
+    still read on the rays (and still hurt to touch): a race line through a
+    pile-up is part of the game.
+    """
+    pop = state.pos.shape[0]
+    nh, h = pop // heat_size, heat_size
+    r_count = rel_angles.shape[0]
+    pos = state.pos.reshape(nh, h, 2)
+    ang = (state.heading[:, None] + rel_angles[None, :]).reshape(nh, h, r_count)
+    d = np.stack([np.cos(ang), np.sin(ang)], axis=-1)        # (nh, H, R, 2)
+
+    to_c = pos[:, None, None, :, :] - pos[:, :, None, None, :]  # (nh,H,1,H,2)
+    t = (to_c * d[:, :, :, None, :]).sum(-1)                 # (nh, H, R, H)
+    center_d2 = (to_c ** 2).sum(-1)                          # (nh, H, 1, H)
+    perp2 = center_d2 - t ** 2
+    r2 = (2.0 * car_radius) ** 2  # circle-vs-circle: sum of both radii
+    hit = (t > 0.0) & (perp2 < r2)
+    t_hit = np.where(hit, t - np.sqrt(np.maximum(r2 - perp2, 0.0)), np.inf)
+    # A car never senses itself.
+    eye = np.eye(h, dtype=bool)[None, :, None, :]
+    t_hit = np.where(eye, np.inf, t_hit)
+    nearest = t_hit.min(axis=3).reshape(pop, r_count)        # (P, R)
+    return np.minimum(nearest / lengths[None, :], 1.0).astype(np.float32)
+
+
+def _car_contacts(pos: np.ndarray, heat_size: int, car_radius: float) -> np.ndarray:
+    """(P,) bool: car center within 2*car_radius of any same-heat car."""
+    pop = pos.shape[0]
+    nh, h = pop // heat_size, heat_size
+    p = pos.reshape(nh, h, 2)
+    d2 = ((p[:, :, None, :] - p[:, None, :, :]) ** 2).sum(-1)  # (nh, H, H)
+    d2[:, np.arange(h), np.arange(h)] = np.inf                 # not yourself
+    return (d2 < (2.0 * car_radius) ** 2).any(axis=2).reshape(pop)
 
 
 def _assemble_obs(dists: np.ndarray, speed_n: np.ndarray,
@@ -133,6 +204,12 @@ def _sense_and_assemble(state: SimState, track: Track, config: Config,
 
     dists = sense(state.pos[rows], state.heading[rows], track.occ_sensor,
                   sc, rel_angles, sample_ts, lengths)
+    if config.sim.heat_size > 0:
+        # Other cars read as walls on the same rays: no new input channel,
+        # so a solo-trained champion can race unmodified.
+        car_dists = _sense_other_cars(state, config.sim.heat_size, rel_angles,
+                                      lengths, config.car.car_radius)
+        dists = np.minimum(dists, car_dists[rows])
     speed_n = (state.speed[rows] / config.car.v_max).astype(np.float32)[:, None]
 
     prev = None
@@ -219,6 +296,11 @@ def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainS
     xi = np.clip(np.round(state.pos[:, 0]).astype(np.int32), 0, g - 1)
     yi = np.clip(np.round(state.pos[:, 1]).astype(np.int32), 0, g - 1)
     crashed_now = track.occ_coll[yi, xi] & state.alive  # grid indexes [y, x]
+    if sim.heat_size > 0:
+        # Car-on-car contact crashes the LIVING party; wreckage stays put
+        # (already dead) and remains a hazard for everyone behind it.
+        crashed_now |= (_car_contacts(state.pos, sim.heat_size,
+                                      config.car.car_radius) & state.alive)
     state.crashed |= crashed_now
     state.alive &= ~crashed_now
 
@@ -268,7 +350,7 @@ def run_episode(genomes: np.ndarray, track: Track, config: Config,
     if max_steps is None:
         max_steps = config.sim.max_steps
 
-    state = init_state(genomes.shape[0], track)
+    state = init_state(genomes.shape[0], track, config.sim.heat_size)
     init_ray_history(state, track, config, rays)
     if spec.recurrent:
         state.h = np.zeros((genomes.shape[0], spec.hidden), dtype=np.float32)
