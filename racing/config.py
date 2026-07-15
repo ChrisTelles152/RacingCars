@@ -82,11 +82,16 @@ class SensorConfig:
     # (perception horizon >= stopping distance, the classic robotics rule).
     ray_angles_deg: tuple[float, ...] = (
         -90.0, -45.0, -22.0, -10.0, -4.0, 0.0, 4.0, 10.0, 22.0, 45.0, 90.0)
-    # Per-ray range (px), same order as the angles: long ahead, short sides.
+    # Per-ray range (px), same order as the angles: long ahead, SHORT sides.
     # None -> every ray uses the scalar ray_length (old checkpoints rely on
     # this fallback, so their 7-ray configs keep loading unchanged).
+    # The short side rays are the Sprint-2 "precision" win (was 160/160/220):
+    # a shorter ray marches the same 36 samples over less distance, so its
+    # quantization drops from ~4.4 px to ~1.9 px — enough to thread the tight
+    # corridors the heatmap flagged. Halved the max-difficulty crash rate at
+    # zero genome/compute cost. `--variant baseline` restores the old ranges.
     ray_lengths: tuple[float, ...] | None = (
-        160.0, 160.0, 220.0, 300.0, 300.0, 300.0, 300.0, 300.0, 220.0, 160.0, 160.0)
+        70.0, 90.0, 140.0, 300.0, 300.0, 300.0, 300.0, 300.0, 140.0, 90.0, 70.0)
     ray_length: float = 300.0   # px, fallback range when ray_lengths is None
     n_samples: int = 36         # S: samples marched along each ray (grid lookup)
 

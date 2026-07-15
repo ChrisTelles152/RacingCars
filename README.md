@@ -150,10 +150,42 @@ because track sampling, population init, and mutation each get an independent
 RNG stream from one master seed (`np.random.SeedSequence`), and the
 simulation itself uses no randomness at all.
 
+## How it's actually developed: measure, then build
+
+Past the first working version, every change is an **experiment with an error
+bar**, run through a rigor pipeline (see `ROADMAP.md`):
+
+- **Three-way split.** Training tracks evolve the population; a 50-track
+  *validation* ladder picks champions (`train.py`); a 300-track *decision*
+  suite gates every ship/kill choice (`compare.py`); a frozen 125-track
+  *test* bank (`evaluate.py`) is read once per milestone for the honest
+  number. Selecting on a set overfits it — so the sets are kept separate.
+- **Paired A/Bs.** Each experiment runs both arms on the same seeds
+  (`run_replicates.py`), and `compare.py` runs a paired one-sided t-test on
+  the per-seed differences — cancelling the run-to-run variance that would
+  otherwise drown a real effect.
+- **Diagnose before fixing.** `evaluate.py --heatmap` localizes *where* a
+  champion fails (corridor width vs corner sharpness) so effort goes to the
+  real cause.
+
+Two worked examples from this repo's own history, both counterintuitive:
+
+- **The cheap fix won.** The champion's residual crashes were all on narrow
+  tracks, so instead of a smarter brain we just *shortened the side sensor
+  rays* (finer distance quantization) — a config one-liner, zero new
+  parameters — and the hardest-track crash rate halved.
+- **More information made it worse.** Adding closure-rate ("time-to-
+  collision") inputs *hurt* on hard tracks. A capacity control (same bigger
+  genome, but the extra inputs carry no new information) proved it wasn't the
+  parameter count — the velocity signal itself was misaligned with a task
+  that needs position precision. More features is not always better, and a
+  capacity control is how you tell.
+
 ## Experiments to try
 
-Each of these is a one-line change in `racing/config.py` (or a CLI flag),
-and comparing `plot_curves.py` outputs is the whole experiment:
+Each of these is a one-line change in `racing/config.py`, a `--variant` in
+`experiments.py`, or a CLI flag; run 3 seeds with `run_replicates.py` and
+gate with `compare.py`:
 
 - **Does crossover help?** `crossover_rate=0.0` vs `0.5` vs `1.0`. Crossover
   of NN weights is genuinely contested ("competing conventions": two parents
@@ -164,6 +196,7 @@ and comparing `plot_curves.py` outputs is the whole experiment:
 - **Population size vs generations**: 128 cars × 600 gens or 1024 × 75?
 - **Mutation schedule**: freeze `sigma_decay=1.0` — does it stop improving?
 - **Blind the car**: 3 rays instead of 7. Add rear rays. Widen the fan.
+  (`--variant baseline` restores the pre-tuning long side rays to compare.)
 - **Bigger brain**: `hidden=64`. Better driver, or just slower evolution?
 - **No curriculum**: `--start-difficulty 1.0 --pin-difficulty`. Can evolution
   bootstrap on hard tracks directly, or does it need the ramp?

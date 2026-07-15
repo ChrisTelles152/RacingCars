@@ -16,14 +16,14 @@ import dataclasses
 
 from racing.config import Config
 
-# Sprint-1 heatmap diagnosis: the residual d=1.0 failures are on the
-# corridor-NARROWNESS axis, so the lateral rays' coarse ~4.4 px quantization
-# (160 px range / 36 samples) against a ~12 px corridor margin is a prime
-# suspect. Shortening the side rays sharpens them to ~1.9 px at zero compute
-# or genome cost (same ray count, same sample count, shorter range = finer
-# steps). Forward rays stay long for braking sight.
-_PRECISION_LENGTHS = (70.0, 90.0, 140.0, 300.0, 300.0, 300.0, 300.0, 300.0,
-                      140.0, 90.0, 70.0)
+# The short side rays that WON Sprint 2 are now the config default (the
+# flagship), so "precision" is the identity variant. To reproduce the
+# pre-Sprint-2 flagship for comparison, the "baseline" variant restores the
+# long side rays. (Sprint-1 heatmap diagnosis: residual d=1.0 failures were
+# on the corridor-narrowness axis; sharpening the lateral rays from ~4.4 px
+# to ~1.9 px quantization halved the max-difficulty crash rate.)
+_BASELINE_LENGTHS = (160.0, 160.0, 220.0, 300.0, 300.0, 300.0, 300.0, 300.0,
+                     220.0, 160.0, 160.0)
 
 
 def _sensor(config: Config, **kw) -> Config:
@@ -32,15 +32,15 @@ def _sensor(config: Config, **kw) -> Config:
 
 
 VARIANTS: dict[str, "callable"] = {
-    "baseline": lambda c: c,
-    # Sharper lateral perception (config-only, clean 2-arm A/B).
-    "precision": lambda c: _sensor(c, ray_lengths=_PRECISION_LENGTHS),
-    # Closure-rate inputs (time-to-collision) + its capacity control.
+    # The current flagship (config default: short/precise side rays).
+    "precision": lambda c: c,
+    # Pre-Sprint-2 flagship: long side rays (~4.4 px lateral quantization).
+    "baseline": lambda c: _sensor(c, ray_lengths=_BASELINE_LENGTHS),
+    # KILLED in Sprint 2: closure-rate inputs (delta) were WORSE than their
+    # own capacity control on hard tracks — the velocity information hurt
+    # where position precision was needed. Kept for reproducibility/teaching.
     "delta": lambda c: _sensor(c, delta_rays=True),
     "deltacap": lambda c: _sensor(c, capacity_control=True),
-    # Combination arm, filled in only if both wins compose.
-    "precision_delta": lambda c: _sensor(
-        c, ray_lengths=_PRECISION_LENGTHS, delta_rays=True),
 }
 
 

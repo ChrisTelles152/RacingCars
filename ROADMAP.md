@@ -106,6 +106,28 @@ dominant failure axis.
 
 ## Sprint 2 — Smarter cars (heatmap-guided; A/Bs on shared seeds)
 
+**Sprint-2 status: DONE (2026-07-14).** Two perception experiments, 3 paired
+seeds each, gated on the decision suite:
+- **Precision (short side rays) → SHIPPED, now the flagship default.**
+  Heatmap-driven: shortened the lateral rays so their quantization dropped
+  4.4 px → 1.9 px, at zero genome/compute cost. Primary +0.190 ± 0.075 mean
+  laps (d≥0.9), t=4.38 > 2.92; d=1.0 crash **4.0% → 1.8%**; no regressions.
+  Meets the phase goal (≤3% crash). The boring, cheap fix beat the fancy one
+  because Sprint 1 measured *where* the failure was first.
+- **Delta-rays (closure rates) → KILLED**, and the capacity control made the
+  reason precise: deltacap (same 418-gene genome, duplicated zero-info rays)
+  was NEUTRAL vs baseline (+0.008, t=0.19), but delta was WORSE than deltacap
+  (−0.378; d=1.0 crash 4.3% → 7.0%). So it wasn't the bigger genome being
+  hard to evolve — the velocity information *itself* hurt on the tight tracks
+  that need position precision (gain=8 likely saturating tanh). A
+  task-misaligned feature degrades a policy even at matched capacity — the
+  exact lesson the capacity-controlled 3-arm design was built to isolate.
+- A view-aliasing bug (closure rates silently zeroed in the hot path) was
+  caught by the batched-vs-solo test BEFORE any training — capacity-control
+  rigor pays for itself.
+
+Below is the original Sprint-2 plan for reference.
+
 **2a. Delta-ray observations (time-to-collision)** — *if the heatmap
 implicates late braking / temporal context*
 obs = [rays_t, k * (rays_t − rays_{t−stride}), speed].
