@@ -56,7 +56,10 @@ SUITE_SPECS: dict[str, list[tuple[int, float]]] = {
     # Sprint-3 capability suites: same difficulty labels, richer generators.
     "width": [(30_000 + i, 0.9) for i in range(25)]
              + [(30_500 + i, 1.0) for i in range(25)],
-    "trap": [(31_000 + i, 0.9) for i in range(25)]
+    # Trap seeds are the first 25 in-range seeds that generate AT their
+    # difficulty label (31008 backs off at d=0.9 and is skipped — vetted by
+    # generability only, never by champion performance, so no leakage).
+    "trap": [(s, 0.9) for s in (*range(31_000, 31_008), *range(31_009, 31_026))]
             + [(31_500 + i, 1.0) for i in range(25)],
 }
 
