@@ -41,8 +41,15 @@ class BrainSpec:
 
 
 def make_spec(brain_cfg: BrainConfig, sensor_cfg: SensorConfig) -> BrainSpec:
-    # +1 input: the car's own normalized speed (proprioception).
-    return BrainSpec(n_in=len(sensor_cfg.ray_angles_deg) + 1, hidden=brain_cfg.hidden)
+    # Inputs: one per ray, +1 for the car's own normalized speed. Delta-rays
+    # (or its capacity control) append a second copy of the ray inputs — one
+    # extra input per ray — for closure rates.
+    n_rays = len(sensor_cfg.ray_angles_deg)
+    if sensor_cfg.delta_rays and sensor_cfg.capacity_control:
+        raise ValueError("delta_rays and capacity_control are mutually exclusive")
+    augmented = sensor_cfg.delta_rays or sensor_cfg.capacity_control
+    n_in = n_rays * (2 if augmented else 1) + 1
+    return BrainSpec(n_in=n_in, hidden=brain_cfg.hidden)
 
 
 def unpack(genomes: np.ndarray, spec: BrainSpec):

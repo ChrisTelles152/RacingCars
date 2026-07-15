@@ -50,6 +50,11 @@ class SimState:
     stall_ref: np.ndarray  # (P,)   float32, progress at last stall check
     steps_alive: np.ndarray  # (P,) int32
     t: int = 0
+    # Ray-history ring buffer for delta-ray (closure-rate) observations —
+    # (stride, P, R), holding the last `stride` ray-distance snapshots; None
+    # unless config.sensor.delta_rays. hist_pos points at the oldest slot.
+    ray_hist: np.ndarray | None = None
+    hist_pos: int = 0
     # Populated by run_episode for observers (viewers draw sensor rays etc.).
     last_obs: np.ndarray | None = None
     last_controls: np.ndarray | None = None
@@ -71,14 +76,85 @@ def init_state(pop: int, track: Track) -> SimState:
     )
 
 
-def build_obs(state: SimState, track: Track, config: Config,
-              rays: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
-    """Observation vector (P, R+1): normalized ray distances + own speed."""
+def init_ray_history(state: SimState, track: Track, config: Config,
+                     rays: tuple[np.ndarray, np.ndarray, np.ndarray]) -> None:
+    """Seed the closure-rate buffer by sensing once at the start pose.
+
+    Filling every slot with the initial reading makes the closure rate ~0 at
+    t=0 (the car hasn't moved) instead of the garbage a zero-fill would feed
+    tanh on the first, most important decision.
+    """
+    if not config.sensor.delta_rays:
+        return
     rel_angles, sample_ts, lengths = rays
     dists = sense(state.pos, state.heading, track.occ_sensor,
                   config.sensor, rel_angles, sample_ts, lengths)
-    speed_n = (state.speed / config.car.v_max).astype(np.float32)[:, None]
+    state.ray_hist = np.repeat(dists[None], config.sensor.delta_stride, axis=0)
+    state.hist_pos = 0
+
+
+def _assemble_obs(dists: np.ndarray, speed_n: np.ndarray,
+                  prev_dists: np.ndarray | None, sensor_cfg) -> np.ndarray:
+    """Build observation rows from ray distances + normalized speed.
+
+    Plain:    [rays, speed].
+    Delta:    [rays, gain*(rays - rays_stride_ago), speed] — appends the
+              closure rate, which is what distance-alone can't convey
+              (time-to-collision needs velocity, not just position).
+    Capacity: [rays, rays, speed] — the delta-arm's control: same width and
+              genome size, zero new information.
+    """
+    if sensor_cfg.delta_rays:
+        delta = (sensor_cfg.delta_gain * (dists - prev_dists)).astype(np.float32)
+        return np.concatenate([dists, delta, speed_n], axis=1)
+    if sensor_cfg.capacity_control:
+        return np.concatenate([dists, dists, speed_n], axis=1)
     return np.concatenate([dists, speed_n], axis=1)
+
+
+def _sense_and_assemble(state: SimState, track: Track, config: Config,
+                        rays: tuple[np.ndarray, np.ndarray, np.ndarray],
+                        idx: np.ndarray | None) -> np.ndarray:
+    """Full-width (P, n_in) observation, sensing only rows in `idx` (None=all).
+
+    For delta-rays this also advances the ring buffer: it reads each computed
+    row's snapshot from `stride` steps ago, then overwrites that slot with the
+    current reading. Only computed (alive) rows are touched, and because a
+    living car was alive at every earlier step too, its buffer history is
+    identical whether or not dead peers were skipped — so the alive-subset
+    optimization stays bit-for-bit faithful to the full-population path.
+    """
+    rel_angles, sample_ts, lengths = rays
+    sc = config.sensor
+    pop = state.pos.shape[0]
+    rows = slice(None) if idx is None else idx
+
+    dists = sense(state.pos[rows], state.heading[rows], track.occ_sensor,
+                  sc, rel_angles, sample_ts, lengths)
+    speed_n = (state.speed[rows] / config.car.v_max).astype(np.float32)[:, None]
+
+    prev = None
+    if sc.delta_rays:
+        # Copy, not a view: for idx=None `ray_hist[hist_pos][:]` is a view of
+        # the slot we overwrite on the next line, which would zero every
+        # closure rate in the full-population path (and silently diverge from
+        # the alive-subset path, where fancy indexing already copies).
+        prev = np.array(state.ray_hist[state.hist_pos][rows])  # rays `stride` steps ago
+        state.ray_hist[state.hist_pos][rows] = dists           # overwrite that slot
+        state.hist_pos = (state.hist_pos + 1) % sc.delta_stride
+
+    row_obs = _assemble_obs(dists, speed_n, prev, sc)
+    if idx is None:
+        return row_obs
+    obs = np.zeros((pop, row_obs.shape[1]), dtype=np.float32)
+    obs[idx] = row_obs
+    return obs
+
+
+def build_obs(state: SimState, track: Track, config: Config,
+              rays: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
+    """Full-population observation vector (P, n_in)."""
+    return _sense_and_assemble(state, track, config, rays, idx=None)
 
 
 def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainSpec,
@@ -103,20 +179,12 @@ def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainS
     if controls is None:
         alive_idx = np.flatnonzero(state.alive)
         if alive_idx.size == pop:
-            obs = build_obs(state, track, config, rays)
+            obs = _sense_and_assemble(state, track, config, rays, idx=None)
             controls = forward(genomes, obs, spec)
         else:
-            rel_angles, sample_ts, lengths = rays
-            dists = sense(state.pos[alive_idx], state.heading[alive_idx],
-                          track.occ_sensor, config.sensor,
-                          rel_angles, sample_ts, lengths)
-            speed_n = (state.speed[alive_idx] / config.car.v_max
-                       ).astype(np.float32)[:, None]
-            obs_alive = np.concatenate([dists, speed_n], axis=1)
-            obs = np.zeros((pop, obs_alive.shape[1]), dtype=np.float32)
-            obs[alive_idx] = obs_alive
+            obs = _sense_and_assemble(state, track, config, rays, idx=alive_idx)
             controls = np.zeros((pop, 2), dtype=np.float32)
-            controls[alive_idx] = forward(genomes[alive_idx], obs_alive, spec)
+            controls[alive_idx] = forward(genomes[alive_idx], obs[alive_idx], spec)
     else:
         obs = build_obs(state, track, config, rays)
     step_cars(state.pos, state.heading, state.speed, state.alive, controls, config.car)
@@ -175,6 +243,7 @@ def run_episode(genomes: np.ndarray, track: Track, config: Config,
         max_steps = config.sim.max_steps
 
     state = init_state(genomes.shape[0], track)
+    init_ray_history(state, track, config, rays)
     while state.t < max_steps and state.alive.any():
         step(state, track, genomes, spec, config, rays)
         if on_step is not None and on_step(state) is False:

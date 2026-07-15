@@ -199,3 +199,78 @@ def test_run_episode_is_deterministic():
     np.testing.assert_array_equal(r1.steps_alive, r2.steps_alive)
     np.testing.assert_array_equal(r1.crashed, r2.crashed)
     assert r1.steps_run == r2.steps_run
+
+
+# ---------------------------------------------------------------------------
+# delta-ray (closure-rate) observations and the alive-subset optimization
+# ---------------------------------------------------------------------------
+
+import dataclasses  # noqa: E402
+
+from racing.simulation import _assemble_obs, build_obs, init_ray_history  # noqa: E402
+
+DELTA_CONFIG = dataclasses.replace(
+    CONFIG, sensor=dataclasses.replace(CONFIG.sensor, delta_rays=True))
+DELTA_SPEC = make_spec(DELTA_CONFIG.brain, DELTA_CONFIG.sensor)
+
+
+def _delta_track(difficulty=0.6):
+    # A harder track so cars die at different times, exercising the
+    # alive-subset code path (not everyone alive to the end).
+    return make_track(seed=13, difficulty=difficulty, cfg=DELTA_CONFIG.track,
+                      car_radius=DELTA_CONFIG.car.car_radius)
+
+
+def test_delta_rays_dont_leak_across_cars():
+    """THE load-bearing invariant for the alive-subset speedup with a shared
+    ray-history buffer: because cars never interact, one car's fitness must be
+    identical whether it is simulated alone or inside a batch. If the closure-
+    rate buffer leaked a neighbor's history (or a skipped dead row corrupted
+    it), a car's result would depend on its batch — silently breaking both
+    determinism and fair selection.
+    """
+    track = _delta_track()
+    genomes = init_population(24, DELTA_SPEC, np.random.default_rng(3),
+                              scale=DELTA_CONFIG.evo.init_scale)
+    batch = run_episode(genomes, track, DELTA_CONFIG)
+    for i in (0, 7, 15, 23):
+        solo = run_episode(genomes[i:i + 1], track, DELTA_CONFIG)
+        assert solo.fitness[0] == batch.fitness[i], f"car {i} batch-dependent"
+        assert solo.crashed[0] == batch.crashed[i]
+
+
+def test_delta_channel_is_zero_at_first_step():
+    """The buffer is seeded by sensing at the start pose, so the closure-rate
+    channel must be ~0 on step 0 (the car hasn't moved) — NOT the saturated
+    garbage a zero-fill would feed tanh on the first, decisive step."""
+    track = _delta_track(0.3)
+    state = init_state(4, track)
+    init_ray_history(state, track, DELTA_CONFIG, RAYS_DELTA)
+    obs = build_obs(state, track, DELTA_CONFIG, RAYS_DELTA)
+    n_rays = len(DELTA_CONFIG.sensor.ray_angles_deg)
+    delta_channel = obs[:, n_rays:2 * n_rays]
+    np.testing.assert_array_equal(delta_channel, np.zeros_like(delta_channel))
+
+
+def test_delta_obs_width_and_capacity_control():
+    """Delta and its capacity control must share input width and genome size
+    (so an A/B isolates information from parameters), and the plain obs must
+    stay narrow."""
+    n_rays = len(CONFIG.sensor.ray_angles_deg)
+    dists = np.ones((3, n_rays), dtype=np.float32)
+    speed = np.full((3, 1), 0.5, dtype=np.float32)
+    prev = dists - 0.01
+    plain = _assemble_obs(dists, speed, None, CONFIG.sensor)
+    delta = _assemble_obs(dists, speed, prev, DELTA_CONFIG.sensor)
+    cap_cfg = dataclasses.replace(
+        CONFIG.sensor, capacity_control=True)
+    cap = _assemble_obs(dists, speed, None, cap_cfg)
+    assert plain.shape[1] == n_rays + 1
+    assert delta.shape[1] == cap.shape[1] == 2 * n_rays + 1
+    # closure-rate channel = gain * (dists - prev)
+    np.testing.assert_allclose(
+        delta[:, n_rays:2 * n_rays],
+        DELTA_CONFIG.sensor.delta_gain * (dists - prev), rtol=1e-5)
+
+
+RAYS_DELTA = ray_geometry(DELTA_CONFIG.sensor)
