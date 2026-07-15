@@ -49,6 +49,8 @@ class Track:
     # Per-checkpoint half-widths (== half_width everywhere unless the
     # variable-width profile is enabled).
     half_widths: np.ndarray | None = None
+    # Grip multiplier grid (G, G) float32 in (0, 1]; None = uniform grip.
+    surface: np.ndarray | None = None
 
     @property
     def n_checkpoints(self) -> int:
@@ -270,6 +272,63 @@ def _rasterize_corridor(
     return grid
 
 
+def _paint_grip_zones(surface: np.ndarray, centerline: np.ndarray,
+                      cum_s: np.ndarray, total: float,
+                      half_widths: np.ndarray, cfg: TrackConfig,
+                      rng: np.random.Generator) -> None:
+    """Paint N low-grip spans of corridor into the surface grid (in place)."""
+    m = centerline.shape[0]
+    for _ in range(cfg.grip_zones):
+        start = int(rng.integers(15, m - 15))   # never on the spawn straight
+        length = int(rng.integers(8, 26))       # ~40-120 px of arc
+        grip = float(rng.uniform(cfg.grip_min, 0.85))
+        idx = (start + np.arange(length)) % m
+        for i in idx:
+            r = int(np.ceil(half_widths[i] + 4.0))  # cover the full corridor
+            x, y = int(round(centerline[i, 0])), int(round(centerline[i, 1]))
+            ys = slice(max(0, y - r), min(surface.shape[0], y + r + 1))
+            xs = slice(max(0, x - r), min(surface.shape[1], x + r + 1))
+            patch = surface[ys, xs]
+            np.minimum(patch, grip, out=patch)  # overlaps keep the worst grip
+
+
+def _stamp_obstacles(occ_sensor: np.ndarray, occ_coll: np.ndarray,
+                     centerline: np.ndarray, normals: np.ndarray,
+                     half_widths: np.ndarray, cfg: TrackConfig,
+                     car_radius: float, rng: np.random.Generator) -> None:
+    """Stamp chicane cones into both grids (in place), alternating sides.
+
+    Placement rules keep every cone honest: only on sections wide enough
+    that the far-side gap stays comfortably passable, never near the spawn,
+    minimum spacing so cones read as a chicane rather than a wall.
+    """
+    m = centerline.shape[0]
+    # Wide-enough sections: far-side gap = 1.4*w - (r_obs + car_radius) must
+    # exceed the car's diameter with slack.
+    min_w = (12.0 + 2.0 + cfg.obstacle_radius + car_radius) / 1.4
+    candidates = np.array([i for i in range(15, m - 15)
+                           if half_widths[i] >= min_w], dtype=np.int64)
+    rng.shuffle(candidates)
+    placed: list[int] = []
+    side = 1.0
+    for i in candidates:
+        if len(placed) >= cfg.obstacles:
+            break
+        if any(min(abs(i - j), m - abs(i - j)) < 30 for j in placed):
+            continue
+        placed.append(i)
+        pos = centerline[i] + normals[i] * (side * 0.4 * half_widths[i])
+        side = -side
+        center = np.round(pos).astype(np.int32)[None, :]
+        for grid, r in ((occ_sensor, cfg.obstacle_radius),
+                        (occ_coll, cfg.obstacle_radius + car_radius)):
+            offsets = _disc_offsets(r)
+            cells = center + offsets
+            xs = np.clip(cells[:, 0], 0, grid.shape[1] - 1)
+            ys = np.clip(cells[:, 1], 0, grid.shape[0] - 1)
+            grid[ys, xs] = True
+
+
 def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float) -> Track:
     """Generate a valid track for (seed, difficulty). Deterministic.
 
@@ -404,6 +463,17 @@ def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
         # against the true walls — one array lookup instead of corner math.
         occ_coll = _rasterize_corridor(centerline, cum_s, total, rast_c, cfg.world_size)
 
+        # Optional environment features (no RNG is drawn when off, so
+        # feature-off tracks stay bit-identical to the pre-feature generator).
+        surface = None
+        if cfg.grip_zones > 0 and difficulty >= 0.5:
+            surface = np.ones((cfg.world_size, cfg.world_size), dtype=np.float32)
+            _paint_grip_zones(surface, centerline, cum_s, total,
+                              half_widths, cfg, rng)
+        if cfg.obstacles > 0 and difficulty >= 0.6:
+            _stamp_obstacles(occ_sensor, occ_coll, centerline, normals,
+                             half_widths, cfg, car_radius, rng)
+
         return Track(
             seed=rng_seed, difficulty=difficulty, half_width=float(half_width),
             centerline=centerline.astype(np.float32),
@@ -414,6 +484,7 @@ def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
             start_pos=centerline[0].astype(np.float32),
             start_heading=float(np.arctan2(tangents[0, 1], tangents[0, 0])),
             half_widths=half_widths.astype(np.float32),
+            surface=surface,
         )
 
     return None  # every candidate rejected; make_track handles the backoff

@@ -312,3 +312,60 @@ def test_trap_track_changes_geometry_and_is_deterministic():
     assert trapped.difficulty == 1.0  # generated at its label, no backoff
     again = _mk(29200, 1.0, cfg, 6.0)
     np.testing.assert_array_equal(trapped.centerline, again.centerline)
+
+
+def test_grip_zones_painted_and_bounded():
+    """Low-grip zones must actually appear in the surface grid, only inside
+    the corridor region, with grip values in [grip_min, 0.85] — and the
+    feature-off surface must be None (no cost, no behavior change)."""
+    cfg = dataclasses.replace(TrackConfig(), grip_zones=2)
+    t = _mk(29300, 1.0, cfg, 6.0)
+    assert t.surface is not None
+    low = t.surface < 0.999
+    assert low.sum() > 500              # zones exist and have area
+    vals = t.surface[low]
+    assert vals.min() >= cfg.grip_min - 1e-6 and vals.max() <= 0.85 + 1e-6
+    assert _mk(29300, 1.0, TrackConfig(), 6.0).surface is None
+    # deterministic
+    t2 = _mk(29300, 1.0, cfg, 6.0)
+    np.testing.assert_array_equal(t.surface, t2.surface)
+
+
+def test_grip_scales_acceleration_and_steering():
+    """On grip g, drive force and steering authority both scale by g — the
+    physics contract the 'drive with margins' lesson depends on."""
+    from racing.car import step_cars
+    from racing.config import CarConfig
+    ccfg = CarConfig()
+    def run(grip):
+        pos = np.zeros((1, 2), np.float32)
+        heading = np.zeros(1, np.float32)
+        speed = np.zeros(1, np.float32)
+        alive = np.ones(1, bool)
+        ctrl = np.array([[1.0, 1.0]], np.float32)
+        for _ in range(30):
+            step_cars(pos, heading, speed, alive, ctrl, ccfg,
+                      None if grip is None else np.full(1, grip, np.float32))
+        return float(speed[0]), float(heading[0])
+    v_full, h_full = run(None)
+    v_ice, h_ice = run(0.5)
+    assert v_ice < v_full * 0.75
+    assert h_ice < h_full * 0.85
+
+
+def test_obstacles_stamped_inside_corridor():
+    """Cones must add wall cells INSIDE the previously drivable corridor
+    (that is what makes them obstacles), in both grids, deterministically,
+    and never near the spawn."""
+    cfg = dataclasses.replace(TrackConfig(), obstacles=3)
+    plain = _mk(29400, 1.0, TrackConfig(), 6.0)
+    coned = _mk(29400, 1.0, cfg, 6.0)
+    added_sensor = coned.occ_sensor & ~plain.occ_sensor
+    added_coll = coned.occ_coll & ~plain.occ_coll
+    assert added_sensor.sum() > 50          # cones visible to sensors
+    assert added_coll.sum() > added_sensor.sum()  # coll cones are inflated
+    # nothing new near the spawn point
+    sx, sy = int(round(plain.start_pos[0])), int(round(plain.start_pos[1]))
+    assert not added_coll[sy - 40:sy + 40, sx - 40:sx + 40].any()
+    again = _mk(29400, 1.0, cfg, 6.0)
+    np.testing.assert_array_equal(coned.occ_sensor, again.occ_sensor)

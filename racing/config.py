@@ -68,6 +68,23 @@ class TrackConfig:
     width_profile_amp: float = 0.0
     width_profile_terms: int = 3
 
+    # --- low-grip surface zones (deferred item; default OFF) ---
+    # Paint N corridor spans with reduced grip (accel AND steering authority
+    # scale by the local surface value). The car is deliberately BLIND to
+    # grip — no sensor input for it — so surviving ice means driving with
+    # margins rather than reacting to a reading. Environment randomization,
+    # paired with physics_rand's dynamics randomization.
+    grip_zones: int = 0
+    grip_min: float = 0.55
+
+    # --- static obstacles / chicane cones (deferred item; default OFF) ---
+    # Small discs stamped into BOTH occupancy grids at alternating lateral
+    # offsets on sufficiently wide sections. Adds line choice as a skill;
+    # also teaches sensor aliasing — an 8 px cone can slip between rays at
+    # range and ambush a fast car.
+    obstacles: int = 0
+    obstacle_radius: float = 6.0
+
     # --- straight-into-hairpin traps (Sprint 3; default OFF) ---
     # With probability trap_prob * ramp(d) (ramp reaches 1 at d=0.9), rewrite
     # a few control points into a long straight feeding a near-limit corner —

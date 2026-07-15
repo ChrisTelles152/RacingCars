@@ -206,7 +206,14 @@ def step(state: SimState, track: Track, genomes: np.ndarray | None, spec: BrainS
                 controls[alive_idx] = forward(genomes[alive_idx], obs[alive_idx], spec)
     else:
         obs = build_obs(state, track, config, rays)
-    step_cars(state.pos, state.heading, state.speed, state.alive, controls, config.car)
+
+    grip = None
+    if track.surface is not None:  # local grip under each car, one gather
+        gx = np.clip(np.round(state.pos[:, 0]).astype(np.int32), 0, g - 1)
+        gy = np.clip(np.round(state.pos[:, 1]).astype(np.int32), 0, g - 1)
+        grip = track.surface[gy, gx]
+    step_cars(state.pos, state.heading, state.speed, state.alive, controls,
+              config.car, grip)
 
     # Collision: one gather in the configuration-space grid.
     xi = np.clip(np.round(state.pos[:, 0]).astype(np.int32), 0, g - 1)

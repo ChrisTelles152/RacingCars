@@ -61,6 +61,10 @@ SUITE_SPECS: dict[str, list[tuple[int, float]]] = {
     # generability only, never by champion performance, so no leakage).
     "trap": [(s, 0.9) for s in (*range(31_000, 31_008), *range(31_009, 31_026))]
             + [(31_500 + i, 1.0) for i in range(25)],
+    "grip": [(32_000 + i, 0.9) for i in range(25)]
+            + [(32_500 + i, 1.0) for i in range(25)],
+    "obstacle": [(33_000 + i, 0.9) for i in range(25)]
+                + [(33_500 + i, 1.0) for i in range(25)],
 }
 
 # Per-suite generator config (the capability being measured lives here).
@@ -69,6 +73,8 @@ SUITE_TRACK: dict[str, TrackConfig] = {
     "decision": CANONICAL_TRACK,
     "width": dataclasses.replace(CANONICAL_TRACK, width_profile_amp=0.3),
     "trap": dataclasses.replace(CANONICAL_TRACK, trap_prob=1.0),
+    "grip": dataclasses.replace(CANONICAL_TRACK, grip_zones=2),
+    "obstacle": dataclasses.replace(CANONICAL_TRACK, obstacles=3),
 }
 
 HEATMAP_SEED_BASE = 25_000   # heatmap cells draw from this reserved range

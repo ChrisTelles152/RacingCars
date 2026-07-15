@@ -53,6 +53,9 @@ class Viewer:
         rgb = np.empty((g, g, 3), dtype=np.uint8)
         rgb[track.occ_sensor] = BG
         rgb[~track.occ_sensor] = TRACK
+        if track.surface is not None:  # low-grip zones tinted icy blue
+            icy = ~track.occ_sensor & (track.surface < 0.999)
+            rgb[icy] = (70, 95, 125)
         # surfarray expects (x, y, 3); our grid is (y, x) — transpose.
         surf = pygame.surfarray.make_surface(rgb.transpose(1, 0, 2))
         surf = pygame.transform.smoothscale(surf, (self.window, self.window))

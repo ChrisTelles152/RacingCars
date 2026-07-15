@@ -33,16 +33,24 @@ def step_cars(
     alive: np.ndarray,    # (P,)   bool
     controls: np.ndarray, # (P, 2) float32 in [-1, 1]: [steer, throttle]
     cfg: CarConfig,
+    grip: np.ndarray | None = None,  # (P,) local surface grip in (0, 1]
 ) -> None:
-    """Advance every alive car by one fixed timestep dt. Dead cars stay put."""
+    """Advance every alive car by one fixed timestep dt. Dead cars stay put.
+
+    `grip` (low-grip surface zones) scales both drive/brake force and
+    steering authority — on ice you can neither accelerate nor turn at full
+    strength, and since the cars cannot SENSE grip, the only winning policy
+    is carrying margins.
+    """
     live = alive.astype(np.float32)
     steer = controls[:, 0]
     throttle = controls[:, 1]  # negative throttle = brake (speed clip stops reverse)
+    g = 1.0 if grip is None else grip
 
     authority = cfg.steer_speed_floor + (1.0 - cfg.steer_speed_floor) * speed / cfg.v_max
-    heading += steer * cfg.steer_rate * authority * cfg.dt * live
+    heading += steer * cfg.steer_rate * authority * g * cfg.dt * live
 
-    speed += (throttle * cfg.accel - cfg.drag * speed) * cfg.dt * live
+    speed += (throttle * cfg.accel * g - cfg.drag * speed) * cfg.dt * live
     np.clip(speed, 0.0, cfg.v_max, out=speed)
     speed *= live  # freeze the dead: zero speed means zero displacement below
 

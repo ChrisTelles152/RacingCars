@@ -60,6 +60,10 @@ VARIANTS: dict[str, "callable"] = {
     # Deferred item: island model (diversity by structure).
     "islands": lambda c: dataclasses.replace(
         c, evo=dataclasses.replace(c.evo, islands=4)),
+    # Deferred item: low-grip surface zones (blind — no grip sensor).
+    "lowgrip": lambda c: _track(c, grip_zones=2),
+    # Deferred item: chicane cones stamped into the corridor.
+    "obstacles": lambda c: _track(c, obstacles=3),
 }
 
 
