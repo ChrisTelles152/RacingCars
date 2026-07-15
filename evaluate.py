@@ -108,8 +108,14 @@ def build_suite(name: str, car_radius: float) -> list:
 
 
 def score_checkpoint(path: str, suite: str) -> dict:
-    """Raw per-difficulty results for one checkpoint on one suite."""
+    """Raw per-difficulty results for one checkpoint on one suite.
+
+    Suites always score SOLO driving — a multicar-trained checkpoint keeps
+    its physics/sensors but races nobody here (heat_size forced to 0).
+    """
     genome, config, meta = load_genome(path)
+    config = dataclasses.replace(
+        config, sim=dataclasses.replace(config.sim, heat_size=0))
     by_d: dict[float, dict[str, list]] = {}
     for track, (seed, d) in zip(build_suite(suite, config.car.car_radius),
                                 SUITE_SPECS[suite]):

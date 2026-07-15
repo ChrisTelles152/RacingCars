@@ -68,6 +68,12 @@ VARIANTS: dict[str, "callable"] = {
     # sense and collide with each other — difficulty from other drivers.
     "multicar": lambda c: dataclasses.replace(
         c, sim=dataclasses.replace(c.sim, heat_size=8)),
+    # Multicar ON TOP of the shipped flagship (precision defaults + width):
+    # the arm that answers "does racing traffic teach anything solo driving
+    # didn't?" — gated on solo non-regression plus race performance.
+    "flag_multicar": lambda c: dataclasses.replace(
+        _track(c, width_profile_amp=0.3),
+        sim=dataclasses.replace(c.sim, heat_size=8)),
 }
 
 
