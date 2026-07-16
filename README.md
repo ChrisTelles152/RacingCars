@@ -203,6 +203,45 @@ maximum difficulty; the first champion generation crashed on 92%.
 | Champion ensembling | KILL | Same-distribution champions fail identically; nothing to decorrelate |
 | ES fine-tuning | KILL | Noisy per-iteration objective = noise-dominated gradient; a converged champion has nothing to polish, only robustness to lose |
 | Multi-car training | KILL (solo) | −0.79 laps solo; but its champions sweep the podium when races turn to carnage — robustness vs pace, quantified |
+| Dense-fan obstacle fix | KILL (improved) | Angular resolution (11 forward rays vs 5) dented the cone blind spot 97%→64% and *halved* its caution tax — but 80% crash at max difficulty remains. See below. |
+
+### Follow-up: chasing the obstacle blind spot
+
+The one glaring hole — 97% crash on mid-corridor cones — got a dedicated
+two-arm investigation, because the KILL above pointed at *perception* not
+*exposure*. The failure was **angular aliasing**: 12 px cones slip between
+the flagship's 4–6° forward ray spacing, so a cone at 7°/130 px is
+literally invisible (0 rays hit it, verified). The fix mirrors the precision
+win exactly — that fixed *distance* resolution; this needed *angular*
+resolution: a 17-ray fan with 11 forward rays over ±16° (2–5° spacing).
+
+Two arms separated perception from policy, and the result is a clean,
+honest *partial*:
+
+| Config | Cone crash | Normal-driving tax |
+|---|---|---|
+| Flagship (sparse fan) | 97% | — |
+| Dense fan, **no** obstacle training | 98% | none (8.97, ≥ flagship) |
+| Sparse fan + obstacle training | 76% | −1.67 laps |
+| **Dense fan + obstacle training** | **64%** (48% @0.9, 80% @1.0) | **−0.74 laps** |
+
+Three findings, each worth more than the headline number:
+- **Perception was necessary but not sufficient.** The dense fan *alone*
+  still crashed 98% — seeing a cone isn't avoiding it; the flagship's
+  wall-avoidance policy doesn't transfer to cones without training on them.
+- **Angular resolution genuinely helped, once the policy could use it.**
+  Dense fan + training beat sparse fan + training (76%→64%), and — the
+  satisfying part — **halved the caution tax** (−1.67 → −0.74 laps). Exactly
+  the hypothesis: a car that can *see* the hazard brakes for it specifically
+  instead of slowing everywhere. Better sight buys targeted avoidance.
+- **It's still not solved.** 80% crash at max difficulty. Threading a 12 px
+  cone in an ~18 px corridor at speed is near the frontier of what 7–17
+  reactive rays and this steering model can do. The next lever is no longer
+  more rays — it's a dedicated obstacle-bearing input (radar-style, not
+  ray-alignment-dependent) or a learned speed penalty near hazards. The
+  dense fan stays a `--variant`, not the flagship default: it's a harmless
+  perception upgrade, but normal driving is already at 0% crash, so it isn't
+  worth its ~50% extra sensing cost as the default.
 
 ## Experiments to try
 

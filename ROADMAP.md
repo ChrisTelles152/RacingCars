@@ -266,3 +266,23 @@ ledger in README.md. Headlines:
 - New tools shipped along the way: race.py (exhibition heats),
   ensemble.py, finetune_es.py, experiments.py variant registry,
   A/B queue automation.
+
+## Follow-up: obstacle blind-spot fix (2026-07-16)
+
+Targeted the program's one glaring hole (97% cone crash). Diagnosis: ANGULAR
+aliasing — 12px cones slip between the flagship's 4-6° forward ray gaps (a
+cone at 7°/130px is invisible, verified). Fix = angular resolution (17-ray
+dense fan, 11 forward rays over ±16°), the analog of precision's distance
+fix. Two arms:
+- **densefan** (dense rays, no obstacle training): 98% cone crash — perception
+  ALONE useless; the flagship's wall-avoidance doesn't transfer to cones.
+  Harmless to normal driving (decision primary 8.97 ≥ flagship).
+- **densefan_obs** (dense rays + obstacle training): 64% cone crash (48%@0.9,
+  80%@1.0) — best yet, vs 76% for sparse-fan+training. And it HALVED the
+  caution tax (−1.67 → −0.74 laps on the decision suite): better sight →
+  targeted avoidance, not blanket slowdown. Hypothesis confirmed.
+Verdict: KILL-but-improved. The blind spot is dented, not closed (80% @d=1.0).
+Kept as a `--variant`, not the flagship default (harmless perception upgrade,
+but no normal-driving benefit for +50% sensing cost). Documented next levers:
+a dedicated obstacle-bearing/proximity input (not ray-alignment-dependent),
+or a learned speed penalty near hazards.
