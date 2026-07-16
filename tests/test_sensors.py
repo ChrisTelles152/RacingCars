@@ -328,3 +328,29 @@ def test_output_dtype_and_range():
     allowed = np.concatenate([steps, [np.float32(1.0)]])
     diffs = np.abs(out.ravel()[:, None] - allowed[None, :]).min(axis=1)
     assert np.all(diffs < 1e-6)
+
+def test_dense_fan_resolves_cone_in_flagship_gap():
+    """The obstacle-fix rationale, pinned: a 12px cone at 7deg bearing sits in
+    the flagship fan's 4-10deg gap and is INVISIBLE to it, but the dense fan
+    (rays at 7deg) always sees it. Angular resolution is the fix, exactly as
+    distance resolution ('precision') was for narrow corridors."""
+    import dataclasses
+    from experiments import apply_variant
+    from racing.config import Config
+    g = 512
+    cx = cy = 256
+    b = np.radians(7.0)
+    ox, oy = cx + 130 * np.cos(b), cy + 130 * np.sin(b)
+    yy, xx = np.mgrid[0:g, 0:g]
+    occ = ((xx - ox) ** 2 + (yy - oy) ** 2 <= 36)
+    pos = np.array([[cx, cy]], np.float32)
+    hd = np.zeros(1, np.float32)
+
+    def hits(variant):
+        c = apply_variant(Config(), variant)
+        rel, ts, ln = ray_geometry(c.sensor)
+        d = sense(pos, hd, occ, c.sensor, rel, ts, ln)[0]
+        return int((d < 0.999).sum())
+
+    assert hits("precision") == 0   # the blind spot
+    assert hits("densefan") >= 1    # fixed

@@ -25,10 +25,27 @@ from racing.config import Config
 _BASELINE_LENGTHS = (160.0, 160.0, 220.0, 300.0, 300.0, 300.0, 300.0, 300.0,
                      220.0, 160.0, 160.0)
 
+# Follow-up (obstacle blind-spot fix): the flagship crashes on 97% of
+# mid-corridor cone tracks because 12 px cones slip between the flagship's
+# 4-6 deg forward ray spacing past ~120 px — the failure is ANGULAR aliasing,
+# the exact analog of the DISTANCE aliasing that "precision" fixed. So the fix
+# is angular resolution: a denser forward fan (17 rays, ~2-3 deg spacing over
+# +-16 deg), which catches a cone out to ~200 px instead of ~120. Short side
+# rays are kept (the precision win). Genome grows 242 -> 338.
+_DENSE_ANGLES = (-90.0, -45.0, -28.0, -16.0, -11.0, -7.0, -4.0, -2.0, 0.0,
+                 2.0, 4.0, 7.0, 11.0, 16.0, 28.0, 45.0, 90.0)
+_DENSE_LENGTHS = (70.0, 100.0, 160.0, 300.0, 300.0, 300.0, 300.0, 300.0, 300.0,
+                  300.0, 300.0, 300.0, 300.0, 300.0, 160.0, 100.0, 70.0)
+
 
 def _sensor(config: Config, **kw) -> Config:
     return dataclasses.replace(
         config, sensor=dataclasses.replace(config.sensor, **kw))
+
+
+def _dense(config: Config) -> Config:
+    return _sensor(config, ray_angles_deg=_DENSE_ANGLES,
+                   ray_lengths=_DENSE_LENGTHS)
 
 
 VARIANTS: dict[str, "callable"] = {
@@ -74,6 +91,18 @@ VARIANTS: dict[str, "callable"] = {
     "flag_multicar": lambda c: dataclasses.replace(
         _track(c, width_profile_amp=0.3),
         sim=dataclasses.replace(c.sim, heat_size=8)),
+    # Obstacle blind-spot fix. Two arms probe whether the 97%-crash failure
+    # is PERCEPTION (can't see cones) or POLICY (sees but doesn't avoid):
+    #  densefan     = flagship + dense forward rays, NO obstacle training.
+    #                 If cones become visible, the existing wall-avoidance may
+    #                 dodge them with no new training — the elegant outcome.
+    #  densefan_obs = dense rays + obstacle training. If perception ALONE
+    #                 isn't enough, exposure on top should finish the job —
+    #                 and better sight may avoid the blanket-caution tax that
+    #                 sank plain obstacle training (-1.7 laps everywhere).
+    "densefan": lambda c: _track(_dense(c), width_profile_amp=0.3),
+    "densefan_obs": lambda c: _track(_dense(c), width_profile_amp=0.3,
+                                     obstacles=3),
 }
 
 
