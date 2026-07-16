@@ -204,6 +204,7 @@ maximum difficulty; the first champion generation crashed on 92%.
 | ES fine-tuning | KILL | Noisy per-iteration objective = noise-dominated gradient; a converged champion has nothing to polish, only robustness to lose |
 | Multi-car training | KILL (solo) | −0.79 laps solo; but its champions sweep the podium when races turn to carnage — robustness vs pace, quantified |
 | Dense-fan obstacle fix | KILL (improved) | Angular resolution (11 forward rays vs 5) dented the cone blind spot 97%→64% and *halved* its caution tax — but 80% crash at max difficulty remains. See below. |
+| Radar obstacle channel | **CAPABILITY SHIP** (variant) | The right modality beats more resolution: 3 true-bearing channels (290 params) → **4% cone crash** on the best seed vs 64% for 6 extra rays (338 params). Not the flagship (pace tax ~1.2 laps), but the designated obstacle-world driver. See below. |
 
 ### Follow-up: chasing the obstacle blind spot
 
@@ -242,6 +243,34 @@ Three findings, each worth more than the headline number:
   dense fan stays a `--variant`, not the flagship default: it's a harmless
   perception upgrade, but normal driving is already at 0% crash, so it isn't
   worth its ~50% extra sensing cost as the default.
+
+**Round 3 — the radar channel (the modality wins).** Acting on that lever:
+3 extra inputs reporting the nearest *visible* frontal cone's true distance
+and bearing (`[d, sin θ, cos θ]`, line-of-sight checked — the review caught
+that without occlusion testing, 62% of reports were through-wall phantoms
+from other track folds). Genome 242→290, *smaller* than the dense fan's 338.
+Results per seed (obstacle-suite crash @0.9/@1.0, then clean-track crash):
+
+| Seed | Cone crash | Clean-track crash | Pace (clean primary) |
+|---|---|---|---|
+| radar-101 | **4% / 4%** | **0.0%** | 7.51 |
+| radar-102 | 8% / 20% | 0.5% | 6.88 |
+| radar-103 | 36% / 64% | 20% | 7.92 |
+
+The blind-spot arc: **97% → 64% (dense fan) → 4% (radar, best seed)**.
+Three lessons close the investigation:
+- **The right representation beats more resolution** — 3 bearing channels
+  with *fewer* parameters did what 6 extra rays could not. The win is
+  attributable to information, not capacity, by construction.
+- **Discovery is a lottery.** One seed solved it, one mostly, one barely —
+  wiring a brand-new input into a working policy is an evolutionary
+  innovation that 300 generations finds sometimes, not always. (Reliable
+  discovery would need longer runs or an obstacle-first curriculum.)
+- **Not the flagship.** Radar champions pay ~1.2 laps of pace on clean
+  tracks (guardrail: KILL for promotion), so `radar` stays the designated
+  obstacle-world variant — different world, different tool. Notably,
+  radar-101 is the project's first champion with ~zero crashes across BOTH
+  worlds.
 
 ## Experiments to try
 

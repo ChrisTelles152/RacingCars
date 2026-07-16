@@ -286,3 +286,16 @@ Kept as a `--variant`, not the flagship default (harmless perception upgrade,
 but no normal-driving benefit for +50% sensing cost). Documented next levers:
 a dedicated obstacle-bearing/proximity input (not ray-alignment-dependent),
 or a learned speed penalty near hazards.
+
+## Follow-up round 3: radar channel closes the blind spot (2026-07-16)
+
+3 alignment-independent inputs (nearest visible frontal cone's distance +
+bearing, line-of-sight checked after review measured 62% through-wall
+phantoms pre-fix). Genome 290 — SMALLER than the dense fan's 338.
+Per-seed cone crash: 4%/4% (radar-101!), 8%/20%, 36%/64%. The arc:
+97% → 64% (dense fan) → **4%** (radar best seed). Lessons: the right
+representation beats more resolution (attributable to information by
+construction — fewer params); discovery is an innovation lottery across
+seeds; guardrail KILL for flagship promotion (~1.2-lap pace tax on clean
+tracks) so `radar` is the designated obstacle-world variant. radar-101 is
+the first champion ~crash-free in BOTH worlds (0.0% clean, 4% cones).
