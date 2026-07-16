@@ -423,3 +423,36 @@ def test_radar_grows_spec_and_episode_runs():
     r1 = run_episode(g, track, c)
     r2 = run_episode(g, track, c)
     np.testing.assert_array_equal(r1.fitness, r2.fitness)
+
+
+def test_radar_respects_line_of_sight():
+    """Radar must not see through walls: a nearer cone behind a slab is
+    invisible (else the channel reports phantom threats from other track
+    folds — measured at ~62% of reports before this mask existed), and the
+    farther VISIBLE cone reports instead. Without the grid the check is
+    skipped (unit-geometry mode)."""
+    from racing.sensors import radar_nearest
+    cfg = SensorConfig(obstacle_radar=True, radar_range=300.0)
+    pos = np.array([[100.0, 256.0]], np.float32)
+    heading = np.array([0.0], np.float32)
+    occ = np.zeros((512, 512), bool)
+    occ[:, 160:172] = True                     # wall slab at x=160-171
+    # cone A: 80px ahead but BEHIND the slab; cone B: 40px ahead, visible
+    cones = np.array([[180.0, 256.0], [140.0, 256.0]], np.float32)
+
+    out = radar_nearest(pos, heading, cones, cfg, occ)
+    np.testing.assert_allclose(out[0], [40/300, 0.0, 1.0], atol=1e-5)
+
+    # remove the visible cone: the through-wall one must NOT report
+    out2 = radar_nearest(pos, heading, cones[:1], cfg, occ)
+    np.testing.assert_array_equal(out2, [[1.0, 0.0, 0.0]])
+
+    # no grid passed -> LOS skipped -> nearest wins regardless
+    out3 = radar_nearest(pos, heading, cones, cfg)
+    np.testing.assert_allclose(out3[0, 0], 40/300, atol=1e-5)
+
+    # a cone right against its own wall stamping must still be visible
+    # (sight line sampled short of the cone): cone at the slab's front face
+    cone_on_wall = np.array([[158.0, 256.0]], np.float32)
+    out4 = radar_nearest(pos, heading, cone_on_wall, cfg, occ)
+    assert out4[0, 0] < 1.0, "cone touching a wall must not self-occlude"

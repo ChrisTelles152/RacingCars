@@ -236,7 +236,7 @@ def _sense_and_assemble(state: SimState, track: Track, config: Config,
     radar = None
     if sc.obstacle_radar:
         radar = radar_nearest(state.pos[rows], state.heading[rows],
-                              track.obstacle_pos, sc)
+                              track.obstacle_pos, sc, track.occ_sensor)
 
     row_obs = _assemble_obs(dists, speed_n, prev, radar, sc)
     if idx is None:

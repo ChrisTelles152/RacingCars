@@ -47,8 +47,9 @@ def ray_geometry(cfg: SensorConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]
 
 def radar_nearest(pos: np.ndarray, heading: np.ndarray,
                   obstacle_pos: np.ndarray | None,
-                  cfg: SensorConfig) -> np.ndarray:
-    """(P, 3) egocentric polar readout of the nearest frontal obstacle.
+                  cfg: SensorConfig,
+                  occ: np.ndarray | None = None) -> np.ndarray:
+    """(P, 3) egocentric polar readout of the nearest VISIBLE frontal obstacle.
 
     Channels: [distance / radar_range, sin(bearing), cos(bearing)], bearing
     measured from the car's heading. "Nothing in range" reads [1, 0, 0] —
@@ -58,8 +59,15 @@ def radar_nearest(pos: np.ndarray, heading: np.ndarray,
     obstacle if one happens to align with it (angular aliasing — the failure
     mode that kept cone crashes at 64-97%), while radar reports the nearest
     threat's true bearing regardless of alignment, continuously through the
-    whole approach. Only obstacles within a frontal arc count: what's behind
-    the car cannot be hit by driving forward.
+    whole approach. Two masks keep the signal honest:
+    - frontal arc only — what's behind the car cannot be hit by driving on;
+    - line of sight against `occ` — without it the radar reports cones on
+      OTHER folds of the track through solid walls (measured: ~62% of
+      reports were through-wall phantoms), training the exact blanket
+      caution the channel exists to avoid. The sight line is sampled
+      strictly SHORT of the cone so its own stamped wall cells never count
+      as occlusion; another cone sitting on the line does occlude (it is
+      the nearer threat and reports instead).
     """
     p = pos.shape[0]
     out = np.zeros((p, 3), dtype=np.float32)
@@ -68,9 +76,26 @@ def radar_nearest(pos: np.ndarray, heading: np.ndarray,
         return out
     diff = obstacle_pos[None, :, :] - pos[:, None, :]           # (P, N, 2)
     dist = np.sqrt((diff ** 2).sum(axis=2))                     # (P, N)
+    dist_safe = np.maximum(dist, 1e-6)
     bearing = np.arctan2(diff[..., 1], diff[..., 0]) - heading[:, None]
     bearing = (bearing + np.pi) % (2.0 * np.pi) - np.pi         # wrap [-pi, pi]
     valid = (dist < cfg.radar_range) & (np.abs(bearing) < np.radians(100.0))
+
+    if occ is not None:
+        g = occ.shape[0]
+        n_los = 16
+        # Sample the sight line up to ~10 px short of the cone (cone radius
+        # + margin), so the cone's own occupancy never self-occludes.
+        seg = np.maximum(dist - 10.0, 1.0)                      # (P, N)
+        unit = diff / dist_safe[..., None]                      # (P, N, 2)
+        fr = np.arange(1, n_los + 1, dtype=np.float32) / (n_los + 1)
+        sample = (pos[:, None, None, :]
+                  + unit[:, :, None, :] * (seg[..., None] * fr)[..., None])
+        xi = np.clip(sample[..., 0], 0, g - 1).astype(np.int32)
+        yi = np.clip(sample[..., 1], 0, g - 1).astype(np.int32)
+        blocked = occ[yi, xi].any(axis=2)                       # (P, N)
+        valid &= ~blocked
+
     dist_masked = np.where(valid, dist, np.inf)
     nearest = dist_masked.argmin(axis=1)                        # (P,)
     rows = np.arange(p)
