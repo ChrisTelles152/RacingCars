@@ -148,6 +148,14 @@ class SensorConfig:
     # rather than just the extra parameters. Mutually exclusive with delta_rays.
     capacity_control: bool = False
 
+    # Obstacle radar (default off): +3 inputs reporting the nearest frontal
+    # cone's [distance, sin(bearing), cos(bearing)] regardless of ray
+    # alignment. Rays failed on cones through ANGULAR aliasing even at 17
+    # rays; radar sidesteps alignment entirely. Reads [1, 0, 0] when no
+    # obstacle is in range (true on every obstacle-free track).
+    obstacle_radar: bool = False
+    radar_range: float = 300.0
+
 
 @dataclass(frozen=True)
 class BrainConfig:

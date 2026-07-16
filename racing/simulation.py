@@ -32,7 +32,7 @@ import numpy as np
 from .brain import BrainSpec, forward, forward_recurrent, make_spec
 from .car import step_cars
 from .config import Config
-from .sensors import ray_geometry, sense
+from .sensors import radar_nearest, ray_geometry, sense
 from .track import Track, project_progress
 
 
@@ -167,7 +167,8 @@ def _car_contacts(pos: np.ndarray, heat_size: int, car_radius: float) -> np.ndar
 
 
 def _assemble_obs(dists: np.ndarray, speed_n: np.ndarray,
-                  prev_dists: np.ndarray | None, sensor_cfg) -> np.ndarray:
+                  prev_dists: np.ndarray | None,
+                  radar: np.ndarray | None, sensor_cfg) -> np.ndarray:
     """Build observation rows from ray distances + normalized speed.
 
     Plain:    [rays, speed].
@@ -176,13 +177,19 @@ def _assemble_obs(dists: np.ndarray, speed_n: np.ndarray,
               (time-to-collision needs velocity, not just position).
     Capacity: [rays, rays, speed] — the delta-arm's control: same width and
               genome size, zero new information.
+    Radar:    appends the 3-channel nearest-obstacle readout before speed.
     """
     if sensor_cfg.delta_rays:
         delta = (sensor_cfg.delta_gain * (dists - prev_dists)).astype(np.float32)
-        return np.concatenate([dists, delta, speed_n], axis=1)
-    if sensor_cfg.capacity_control:
-        return np.concatenate([dists, dists, speed_n], axis=1)
-    return np.concatenate([dists, speed_n], axis=1)
+        parts = [dists, delta]
+    elif sensor_cfg.capacity_control:
+        parts = [dists, dists]
+    else:
+        parts = [dists]
+    if radar is not None:
+        parts.append(radar)
+    parts.append(speed_n)
+    return np.concatenate(parts, axis=1)
 
 
 def _sense_and_assemble(state: SimState, track: Track, config: Config,
@@ -226,7 +233,12 @@ def _sense_and_assemble(state: SimState, track: Track, config: Config,
         state.ray_hist[state.hist_pos][rows] = dists           # overwrite that slot
         state.hist_pos = (state.hist_pos + 1) % sc.delta_stride
 
-    row_obs = _assemble_obs(dists, speed_n, prev, sc)
+    radar = None
+    if sc.obstacle_radar:
+        radar = radar_nearest(state.pos[rows], state.heading[rows],
+                              track.obstacle_pos, sc)
+
+    row_obs = _assemble_obs(dists, speed_n, prev, radar, sc)
     if idx is None:
         return row_obs
     obs = np.zeros((pop, row_obs.shape[1]), dtype=np.float32)

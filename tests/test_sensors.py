@@ -354,3 +354,72 @@ def test_dense_fan_resolves_cone_in_flagship_gap():
 
     assert hits("precision") == 0   # the blind spot
     assert hits("densefan") >= 1    # fixed
+
+
+# ---------------------------------------------------------------------------
+# obstacle radar
+# ---------------------------------------------------------------------------
+
+def test_radar_reads_nearest_frontal_obstacle():
+    """The radar contract: nearest in-range frontal cone as [d/range,
+    sin(bearing), cos(bearing)], bearing in the CAR frame. This is the
+    alignment-independent signal rays cannot provide."""
+    from racing.sensors import radar_nearest
+    cfg = SensorConfig(obstacle_radar=True, radar_range=300.0)
+    pos = np.array([[100.0, 100.0]], np.float32)
+    heading = np.array([0.0], np.float32)  # facing +x
+    # two cones: one 50px dead ahead, one 40px behind (must be ignored)
+    obstacles = np.array([[150.0, 100.0], [60.0, 100.0]], np.float32)
+    out = radar_nearest(pos, heading, obstacles, cfg)
+    np.testing.assert_allclose(out[0], [50/300, 0.0, 1.0], atol=1e-6)
+
+    # cone 30 degrees to the left at 100px, car heading +x
+    th = np.radians(30.0)
+    obstacles = np.array([[100 + 100*np.cos(th), 100 + 100*np.sin(th)]],
+                         np.float32)
+    out = radar_nearest(pos, heading, obstacles, cfg)
+    np.testing.assert_allclose(out[0], [100/300, np.sin(th), np.cos(th)],
+                               atol=1e-5)
+
+    # heading rotation moves the bearing: same cone, car now facing +y
+    out = radar_nearest(pos, np.array([np.pi/2], np.float32), obstacles, cfg)
+    np.testing.assert_allclose(out[0, 1], np.sin(th - np.pi/2), atol=1e-5)
+
+
+def test_radar_none_in_range_reads_far_and_directionless():
+    """[1, 0, 0] is the 'no threat' word: max distance, zero direction —
+    constant on every obstacle-free track, so the channels are learnable
+    as 'ignore unless they move'."""
+    from racing.sensors import radar_nearest
+    cfg = SensorConfig(obstacle_radar=True, radar_range=300.0)
+    pos = np.array([[100.0, 100.0]], np.float32)
+    heading = np.array([0.0], np.float32)
+    out_none = radar_nearest(pos, heading, None, cfg)
+    out_empty = radar_nearest(pos, heading, np.zeros((0, 2), np.float32), cfg)
+    out_far = radar_nearest(pos, heading,
+                            np.array([[900.0, 100.0]], np.float32), cfg)
+    for out in (out_none, out_empty, out_far):
+        np.testing.assert_array_equal(out, [[1.0, 0.0, 0.0]])
+
+
+def test_radar_grows_spec_and_episode_runs():
+    """make_spec adds exactly 3 inputs; a radar config drives a real obstacle
+    track end-to-end deterministically."""
+    import dataclasses
+    from experiments import apply_variant
+    from racing.config import Config
+    from racing.brain import make_spec, init_population
+    from racing.track import make_track
+    from racing.simulation import run_episode
+    c = apply_variant(Config(), "radar")
+    plain = apply_variant(Config(), "precision")
+    spec_r = make_spec(c.brain, c.sensor)
+    spec_p = make_spec(plain.brain, plain.sensor)
+    assert spec_r.n_in == spec_p.n_in + 3
+    assert spec_r.genome_size == 290
+    track = make_track(29500, 1.0, c.track, c.car.car_radius)
+    assert track.obstacle_pos is not None and len(track.obstacle_pos) >= 1
+    g = init_population(16, spec_r, np.random.default_rng(2))
+    r1 = run_episode(g, track, c)
+    r2 = run_episode(g, track, c)
+    np.testing.assert_array_equal(r1.fitness, r2.fitness)

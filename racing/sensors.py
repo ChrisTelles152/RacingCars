@@ -45,6 +45,44 @@ def ray_geometry(cfg: SensorConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]
     return rel_angles, sample_ts, lengths
 
 
+def radar_nearest(pos: np.ndarray, heading: np.ndarray,
+                  obstacle_pos: np.ndarray | None,
+                  cfg: SensorConfig) -> np.ndarray:
+    """(P, 3) egocentric polar readout of the nearest frontal obstacle.
+
+    Channels: [distance / radar_range, sin(bearing), cos(bearing)], bearing
+    measured from the car's heading. "Nothing in range" reads [1, 0, 0] —
+    max distance, zero direction vector.
+
+    This is the deliberate contrast with ray sensing: a ray only reports an
+    obstacle if one happens to align with it (angular aliasing — the failure
+    mode that kept cone crashes at 64-97%), while radar reports the nearest
+    threat's true bearing regardless of alignment, continuously through the
+    whole approach. Only obstacles within a frontal arc count: what's behind
+    the car cannot be hit by driving forward.
+    """
+    p = pos.shape[0]
+    out = np.zeros((p, 3), dtype=np.float32)
+    out[:, 0] = 1.0
+    if obstacle_pos is None or len(obstacle_pos) == 0:
+        return out
+    diff = obstacle_pos[None, :, :] - pos[:, None, :]           # (P, N, 2)
+    dist = np.sqrt((diff ** 2).sum(axis=2))                     # (P, N)
+    bearing = np.arctan2(diff[..., 1], diff[..., 0]) - heading[:, None]
+    bearing = (bearing + np.pi) % (2.0 * np.pi) - np.pi         # wrap [-pi, pi]
+    valid = (dist < cfg.radar_range) & (np.abs(bearing) < np.radians(100.0))
+    dist_masked = np.where(valid, dist, np.inf)
+    nearest = dist_masked.argmin(axis=1)                        # (P,)
+    rows = np.arange(p)
+    has = np.isfinite(dist_masked[rows, nearest])
+    d = (dist[rows, nearest] / cfg.radar_range).astype(np.float32)
+    th = bearing[rows, nearest]
+    out[has, 0] = d[has]
+    out[has, 1] = np.sin(th[has]).astype(np.float32)
+    out[has, 2] = np.cos(th[has]).astype(np.float32)
+    return out
+
+
 def sense(
     pos: np.ndarray,        # (P, 2) float32
     heading: np.ndarray,    # (P,)   float32

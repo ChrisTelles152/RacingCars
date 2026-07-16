@@ -51,6 +51,10 @@ class Track:
     half_widths: np.ndarray | None = None
     # Grip multiplier grid (G, G) float32 in (0, 1]; None = uniform grip.
     surface: np.ndarray | None = None
+    # Obstacle (cone) center positions (N, 2) float32; None = no obstacles.
+    # The grids already encode them as walls — this metadata exists so a
+    # radar-style sensor can report bearing/distance without ray alignment.
+    obstacle_pos: np.ndarray | None = None
 
     @property
     def n_checkpoints(self) -> int:
@@ -295,12 +299,14 @@ def _paint_grip_zones(surface: np.ndarray, centerline: np.ndarray,
 def _stamp_obstacles(occ_sensor: np.ndarray, occ_coll: np.ndarray,
                      centerline: np.ndarray, normals: np.ndarray,
                      half_widths: np.ndarray, cfg: TrackConfig,
-                     car_radius: float, rng: np.random.Generator) -> None:
+                     car_radius: float,
+                     rng: np.random.Generator) -> np.ndarray:
     """Stamp chicane cones into both grids (in place), alternating sides.
 
     Placement rules keep every cone honest: only on sections wide enough
     that the far-side gap stays comfortably passable, never near the spawn,
     minimum spacing so cones read as a chicane rather than a wall.
+    Returns the cone center positions (N, 2) for radar-style sensing.
     """
     m = centerline.shape[0]
     # Wide-enough sections: far-side gap = 1.4*w - (r_obs + car_radius) must
@@ -310,6 +316,7 @@ def _stamp_obstacles(occ_sensor: np.ndarray, occ_coll: np.ndarray,
                            if half_widths[i] >= min_w], dtype=np.int64)
     rng.shuffle(candidates)
     placed: list[int] = []
+    positions: list[np.ndarray] = []
     side = 1.0
     for i in candidates:
         if len(placed) >= cfg.obstacles:
@@ -318,6 +325,7 @@ def _stamp_obstacles(occ_sensor: np.ndarray, occ_coll: np.ndarray,
             continue
         placed.append(i)
         pos = centerline[i] + normals[i] * (side * 0.4 * half_widths[i])
+        positions.append(pos.astype(np.float32))
         side = -side
         center = np.round(pos).astype(np.int32)[None, :]
         for grid, r in ((occ_sensor, cfg.obstacle_radius),
@@ -327,6 +335,8 @@ def _stamp_obstacles(occ_sensor: np.ndarray, occ_coll: np.ndarray,
             xs = np.clip(cells[:, 0], 0, grid.shape[1] - 1)
             ys = np.clip(cells[:, 1], 0, grid.shape[0] - 1)
             grid[ys, xs] = True
+    return (np.stack(positions) if positions
+            else np.zeros((0, 2), dtype=np.float32))
 
 
 def make_track(seed: int, difficulty: float, cfg: TrackConfig, car_radius: float) -> Track:
@@ -470,9 +480,11 @@ def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
             surface = np.ones((cfg.world_size, cfg.world_size), dtype=np.float32)
             _paint_grip_zones(surface, centerline, cum_s, total,
                               half_widths, cfg, rng)
+        obstacle_pos = None
         if cfg.obstacles > 0 and difficulty >= 0.6:
-            _stamp_obstacles(occ_sensor, occ_coll, centerline, normals,
-                             half_widths, cfg, car_radius, rng)
+            obstacle_pos = _stamp_obstacles(occ_sensor, occ_coll, centerline,
+                                            normals, half_widths, cfg,
+                                            car_radius, rng)
 
         return Track(
             seed=rng_seed, difficulty=difficulty, half_width=float(half_width),
@@ -485,6 +497,7 @@ def _generate(rng_seed: int, difficulty: float, cfg: TrackConfig,
             start_heading=float(np.arctan2(tangents[0, 1], tangents[0, 0])),
             half_widths=half_widths.astype(np.float32),
             surface=surface,
+            obstacle_pos=obstacle_pos,
         )
 
     return None  # every candidate rejected; make_track handles the backoff

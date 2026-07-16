@@ -260,11 +260,11 @@ def test_delta_obs_width_and_capacity_control():
     dists = np.ones((3, n_rays), dtype=np.float32)
     speed = np.full((3, 1), 0.5, dtype=np.float32)
     prev = dists - 0.01
-    plain = _assemble_obs(dists, speed, None, CONFIG.sensor)
-    delta = _assemble_obs(dists, speed, prev, DELTA_CONFIG.sensor)
+    plain = _assemble_obs(dists, speed, None, None, CONFIG.sensor)
+    delta = _assemble_obs(dists, speed, prev, None, DELTA_CONFIG.sensor)
     cap_cfg = dataclasses.replace(
         CONFIG.sensor, capacity_control=True)
-    cap = _assemble_obs(dists, speed, None, cap_cfg)
+    cap = _assemble_obs(dists, speed, None, None, cap_cfg)
     assert plain.shape[1] == n_rays + 1
     assert delta.shape[1] == cap.shape[1] == 2 * n_rays + 1
     # closure-rate channel = gain * (dists - prev)

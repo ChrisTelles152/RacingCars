@@ -53,7 +53,8 @@ def make_spec(brain_cfg: BrainConfig, sensor_cfg: SensorConfig) -> BrainSpec:
     if sensor_cfg.delta_rays and sensor_cfg.delta_stride < 1:
         raise ValueError("delta_stride must be >= 1")
     augmented = sensor_cfg.delta_rays or sensor_cfg.capacity_control
-    n_in = n_rays * (2 if augmented else 1) + 1
+    n_in = (n_rays * (2 if augmented else 1)
+            + (3 if sensor_cfg.obstacle_radar else 0) + 1)
     return BrainSpec(n_in=n_in, hidden=brain_cfg.hidden,
                      recurrent=brain_cfg.recurrent)
 

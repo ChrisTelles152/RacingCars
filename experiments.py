@@ -103,6 +103,16 @@ VARIANTS: dict[str, "callable"] = {
     "densefan": lambda c: _track(_dense(c), width_profile_amp=0.3),
     "densefan_obs": lambda c: _track(_dense(c), width_profile_amp=0.3,
                                      obstacles=3),
+    # Obstacle fix, round 2: a dedicated RADAR channel (nearest cone's
+    # distance + bearing, alignment-independent) on the ordinary flagship
+    # fan, + obstacle training. Tests whether the right MODALITY beats more
+    # angular resolution: dense-fan+training plateaued at 64% crash because
+    # rays only report cones that happen to line up; radar always reports
+    # the true bearing. Genome 242 -> 290 (vs densefan_obs's 338 — if radar
+    # wins with FEWER params, the information/parameters question answers
+    # itself and no capacity control is needed).
+    "radar": lambda c: _track(_sensor(c, obstacle_radar=True),
+                              width_profile_amp=0.3, obstacles=3),
 }
 
 
