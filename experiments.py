@@ -113,6 +113,18 @@ VARIANTS: dict[str, "callable"] = {
     # itself and no capacity control is needed).
     "radar": lambda c: _track(_sensor(c, obstacle_radar=True),
                               width_profile_amp=0.3, obstacles=3),
+    # Reliability round: the LAST standing hypothesis for why radar champions
+    # still hit cones they can see. Perception, selection, incentives and
+    # training time were each measured and ruled out; what remains is that
+    # cornering + width adaptation + cone dodging is too much for 16 hidden
+    # units. Doubles the hidden layer (genome 290 -> 578) and changes NOTHING
+    # else, so a win is attributable to capacity — the one case in this
+    # project where "more parameters" is a targeted hypothesis rather than
+    # the untargeted kind that lost every previous time.
+    "radar_big": lambda c: dataclasses.replace(
+        _track(_sensor(c, obstacle_radar=True),
+               width_profile_amp=0.3, obstacles=3),
+        brain=dataclasses.replace(c.brain, hidden=32)),
 }
 
 
