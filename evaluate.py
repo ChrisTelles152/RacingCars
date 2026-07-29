@@ -65,6 +65,12 @@ SUITE_SPECS: dict[str, list[tuple[int, float]]] = {
             + [(32_500 + i, 1.0) for i in range(25)],
     "obstacle": [(33_000 + i, 0.9) for i in range(25)]
                 + [(33_500 + i, 1.0) for i in range(25)],
+    # 100 tracks at max difficulty (SE ~3pp). The 25-track suite above
+    # cannot resolve single-digit crash rates and flipped this project's
+    # conclusions TWICE — once making a champion look better than it was
+    # (4% for a true ~7%), once making a whole arm look like a winner
+    # (8% for a true 13%). Use this one for any sub-20% comparison.
+    "obstacle_big": [(34_000 + i, 1.0) for i in range(100)],
 }
 
 # Per-suite generator config (the capability being measured lives here).
@@ -75,6 +81,7 @@ SUITE_TRACK: dict[str, TrackConfig] = {
     "trap": dataclasses.replace(CANONICAL_TRACK, trap_prob=1.0),
     "grip": dataclasses.replace(CANONICAL_TRACK, grip_zones=2),
     "obstacle": dataclasses.replace(CANONICAL_TRACK, obstacles=3),
+    "obstacle_big": dataclasses.replace(CANONICAL_TRACK, obstacles=3),
 }
 
 HEATMAP_SEED_BASE = 25_000   # heatmap cells draw from this reserved range

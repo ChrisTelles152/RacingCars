@@ -299,3 +299,33 @@ construction — fewer params); discovery is an innovation lottery across
 seeds; guardrail KILL for flagship promotion (~1.2-lap pace tax on clean
 tracks) so `radar` is the designated obstacle-world variant. radar-101 is
 the first champion ~crash-free in BOTH worlds (0.0% clean, 4% cones).
+
+## Follow-up round 4: radar reliability — a well-characterized frontier (2026-07-16)
+
+Goal: make radar's cone-avoidance discovery reliable across seeds. FIVE
+hypotheses measured; all five ruled out:
+1. dead input (weights drift while radar reads constant) — NO: radar weights
+   healthy in every seed; the WORST seed had the highest radar/ray ratio.
+2. selection missed a good champion — NO: the champion archive shows the
+   failed seed never produced one (best 75% at any generation).
+3. crashing under-punished — NO: crashing forfeits the episode remainder
+   (1.44 vs 6.86 mean fitness); the 0.02 constant is irrelevant.
+4. training cut short — NO: 5 seeds x 600 gens, paired via deterministic
+   replay of the first 300 (verified bit-identical). Solve rate 0/5 at both
+   horizons; median 20%->16%.
+5. policy capacity — NO: hidden 16->32 "solved" 2/5 seeds on the 25-track
+   probe, but those champions measure 11-13% on 100 tracks vs 7% for the
+   16-unit best. The instrument, not the method, produced the win.
+
+Residual failure mode: 83% of crashes are genuine cone hits (not
+dodge-induced wall crashes) -> policy-class frontier.
+
+MEASUREMENT LESSON (twice, in opposite directions): the 25-track obstacle
+suite has ~6pp binomial noise, the size of the effects being chased. It
+inflated one champion (4% for a true 7%) and manufactured a fake winning
+arm (8% for a true 13%). New `obstacle_big` suite (100 tracks, seeds
+34000+, SE ~3pp) is now required for any sub-20% comparison.
+
+HONEST STATUS: radar takes cone crashes 97% -> ~7-20% on EVERY seed (best
+champion 7% +- 3%). Landing every seed at the bottom of that band needs a
+different policy class, not another knob.

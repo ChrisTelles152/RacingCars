@@ -204,8 +204,9 @@ maximum difficulty; the first champion generation crashed on 92%.
 | ES fine-tuning | KILL | Noisy per-iteration objective = noise-dominated gradient; a converged champion has nothing to polish, only robustness to lose |
 | Multi-car training | KILL (solo) | −0.79 laps solo; but its champions sweep the podium when races turn to carnage — robustness vs pace, quantified |
 | Dense-fan obstacle fix | KILL (improved) | Angular resolution (11 forward rays vs 5) dented the cone blind spot 97%→64% and *halved* its caution tax — but 80% crash at max difficulty remains. See below. |
-| Radar obstacle channel | **CAPABILITY SHIP** (variant) | The right modality beats more resolution: 3 true-bearing channels (290 params) → **~8% cone crash** on the best seed vs 64% for 6 extra rays (338 params). Not the flagship (pace tax ~1.2 laps), but the designated obstacle-world driver. See below. |
-| Radar *reliability* (longer runs) | KILL | Doubling training to 600 generations left the solve rate at 0/5 seeds (median 20%→16%). Perception, selection, incentives and time were each measured and ruled out — the residual is the policy class, not the search. See below. |
+| Radar obstacle channel | **CAPABILITY SHIP** (variant) | The right modality beats more resolution: 3 true-bearing channels (290 params) → **7% ± 3% cone crash** on the best seed vs 64% for 6 extra rays (338 params). Not the flagship (pace tax ~1.2 laps), but the designated obstacle-world driver. See below. |
+| Radar *reliability* (longer runs) | KILL | Doubling training to 600 generations left the solve rate flat (median 20%→16%). Perception, selection, incentives and time each measured and ruled out. See below. |
+| Radar *reliability* (2× capacity) | KILL | hidden 16→32 looked like a breakthrough on 25 tracks (2/5 seeds "solved" at 8%) — on 100 tracks those same champions are 11–13%, *worse* than the 16-unit best at 7%. The measurement, not the method, had produced the win. |
 
 ### Follow-up: chasing the obstacle blind spot
 
@@ -258,15 +259,14 @@ Results per seed (obstacle-suite crash @0.9/@1.0, then clean-track crash):
 | radar-102 | 8% / 20% | 0.5% | 6.88 |
 | radar-103 | 36% / 64% | 20% | 7.92 |
 
-> **Correction (measured later).** That headline "4%" was 1 crash in 25
-> tracks — a lucky sample. The *same genome* scores 3/25 on a fresh 25-track
-> probe; pooled over both, ~8% with an 8-point standard error on the
-> difference. A 25-track suite cannot resolve single-digit rates, which is
-> this project's own recurring lesson (resolution must match effect size)
-> landing on its author. The improvement is real and large; the precise
-> figure was overstated.
+> **Correction (measured properly later).** Those 25-track figures are not
+> trustworthy at this scale. Re-measured on **100 tracks** (SE ~3pp), the
+> best radar champion is **7% ± 3%** — the honest headline. The original
+> "4%" was 1 crash in 25, a lucky sample; a mid-investigation "correction"
+> to 8% was itself slightly pessimistic. Sub-20% comparisons now use the
+> `obstacle_big` suite; the 25-track suite cannot resolve them.
 
-The blind-spot arc: **97% → 64% (dense fan) → ~8% (radar, best seed)**.
+The blind-spot arc: **97% → 64% (dense fan) → 7% ± 3% (radar, best seed)**.
 Three lessons close the investigation:
 - **The right representation beats more resolution** — 3 bearing channels
   with *fewer* parameters did what 6 extra rays could not. The win is
@@ -298,13 +298,34 @@ per-generation streams mean a 600-gen run replays its own first 300 exactly
 at either horizon — with the counterfactual champion chosen by the run's own
 validation rule, never by peeking at the probe.
 
+A fifth hypothesis — *policy capacity* (cornering + width adaptation + cone
+dodging is too much for 16 hidden units) — produced the investigation's
+sharpest lesson. Doubling to 32 units looked like the breakthrough: 2 of 5
+seeds "solved" at 8% on the 25-track probe, something no 16-unit seed had
+ever done. **On 100 tracks those same champions measure 11–13%, while the
+16-unit champion measures 7%.** The apparent win was entirely the
+instrument. Capacity: KILL.
+
 What's left, measured: **83% of residual crashes are genuine cone hits**,
 not walls hit while dodging. The cars see the cone, are paid to avoid it,
-have time to search — and still hit it. That is the signature of a policy
-class at its limit, not a search that needs more luck or time. The honest
-summary: radar took cone crashes from 97% to the 10-20% band reliably
-(every seed improved hugely), and the last stretch below 10% is a
-capability question, not a reliability one.
+have time and capacity to search — and still hit it. That is a policy class
+at its limit, not a search that needs more luck.
+
+**The meta-lesson, learned the hard way.** A 25-track probe flipped this
+investigation's conclusions *twice, in opposite directions* — inflating one
+champion (4% for a true 7%) and manufacturing a fake winner (8% for a true
+13%). Binomial noise at n=25 is ±6pp, which is the entire size of the
+effects being chased. The project had already learned "resolution must match
+effect size" from the failure heatmap in Sprint 1; it had to learn it again
+here, as the author, twice. Sub-20% comparisons now run on `obstacle_big`
+(100 tracks, SE ~3pp).
+
+**Honest bottom line on reliability:** radar moved cone crashes from 97% to
+the ~7–20% band on *every* seed — a large, robust improvement. Making every
+seed land at the bottom of that band is not achievable by more time, more
+capacity, better incentives, or better selection; all four were measured.
+The remaining gap belongs to the policy class (a reactive 2-layer MLP), and
+the next honest lever would be a different class — not another knob.
 
 ## Experiments to try
 
