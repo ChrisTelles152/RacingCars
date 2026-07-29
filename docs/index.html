@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RacingCars — Evolving Drivers, and Learning to Trust the Numbers</title>
+<meta name="description" content="Neural networks learn to race procedurally generated tracks by evolution alone — no gradients, no training data. The full field report: how it works, 15 experiments, and the four times the measurements lied.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://christelles152.github.io/RacingCars/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="RacingCars — Evolving Drivers, and Learning to Trust the Numbers">
+<meta property="og:description" content="Neural networks learn to race procedurally generated tracks by evolution alone — no gradients, no training data. The full field report: how it works, 15 experiments, and the four times the measurements lied.">
+<meta property="og:url" content="https://christelles152.github.io/RacingCars/">
+<meta property="og:image" content="https://christelles152.github.io/RacingCars/media/champion.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RacingCars — Evolving Drivers, and Learning to Trust the Numbers">
+<meta name="twitter:description" content="Neural networks learn to race procedurally generated tracks by evolution alone — no gradients, no training data. The full field report: how it works, 15 experiments, and the four times the measurements lied.">
+<meta name="twitter:image" content="https://christelles152.github.io/RacingCars/media/champion.jpg">
+<style>
+:root{
+ --paper:#f3f4f7; --surface:#fff; --ink:#15171e; --muted:#5b6273;
+ --rule:#d7dae1; --rule2:#c3c8d2; --sig:#1f6feb; --ship:#1a7a4f;
+ --kill:#a8452f; --warn:#8a6100; --mark:#fff3cf;
+}
+@media (prefers-color-scheme:dark){:root{
+ --paper:#0f1116; --surface:#171a21; --ink:#e5e8ef; --muted:#939aab;
+ --rule:#272b35; --rule2:#39404e; --sig:#5aa9ff; --ship:#4ec48a;
+ --kill:#e0705f; --warn:#f0b429; --mark:#3a2f14;}}
+:root[data-theme="light"]{--paper:#f3f4f7;--surface:#fff;--ink:#15171e;
+ --muted:#5b6273;--rule:#d7dae1;--rule2:#c3c8d2;--sig:#1f6feb;--ship:#1a7a4f;
+ --kill:#a8452f;--warn:#8a6100;--mark:#fff3cf}
+:root[data-theme="dark"]{--paper:#0f1116;--surface:#171a21;--ink:#e5e8ef;
+ --muted:#939aab;--rule:#272b35;--rule2:#39404e;--sig:#5aa9ff;--ship:#4ec48a;
+ --kill:#e0705f;--warn:#f0b429;--mark:#3a2f14}
+
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);margin:0;padding:0 20px 90px;
+ font:17px/1.65 Georgia,"Iowan Old Style","Times New Roman",serif;
+ -webkit-font-smoothing:antialiased}
+.wrap{max-width:760px;margin:0 auto}
+p{max-width:68ch}
+.disp{font-family:"Avenir Next Condensed","Oswald","Arial Narrow",
+ "Helvetica Neue",sans-serif;font-weight:600;letter-spacing:.01em}
+.mono,code,td.num,th{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+
+header{border-bottom:2px solid var(--ink);padding:52px 0 22px;margin-bottom:34px}
+.kicker{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11.5px;
+ letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:"Avenir Next Condensed","Oswald","Arial Narrow",sans-serif;
+ font-weight:700;font-size:clamp(34px,6.2vw,58px);line-height:1.02;
+ margin:14px 0 16px;text-wrap:balance;letter-spacing:-.01em}
+.stand{font-size:19px;line-height:1.6;color:var(--muted);max-width:64ch;margin:0}
+.byline{margin-top:22px;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+ color:var(--muted);display:flex;gap:18px;flex-wrap:wrap}
+
+h2{font-family:"Avenir Next Condensed","Oswald","Arial Narrow",sans-serif;
+ font-weight:700;font-size:27px;margin:56px 0 4px;letter-spacing:.005em;
+ padding-top:14px;border-top:1px solid var(--rule)}
+h2 .n{color:var(--muted);font-size:15px;margin-right:10px;
+ font-family:ui-monospace,Menlo,monospace;font-weight:400}
+h3{font-family:"Avenir Next Condensed","Oswald","Arial Narrow",sans-serif;
+ font-weight:600;font-size:19px;margin:30px 0 2px}
+.dek{color:var(--muted);font-size:15px;margin:2px 0 18px;max-width:66ch}
+
+figure{margin:24px 0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:660px){.grid2{grid-template-columns:1fr}}
+.shot{background:#0e1015;border:1px solid var(--rule);border-radius:4px;padding:7px;margin:0}
+.shot img{width:100%;display:block;border-radius:2px}
+figcaption{font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.5;
+ color:var(--muted);padding:8px 3px 0}
+.chart{width:100%;height:auto;display:block;margin:8px 0}
+.ax{font-family:ui-monospace,Menlo,monospace;font-size:10px;fill:var(--muted)}
+.axl{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;fill:var(--muted)}
+.axv{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;fill:var(--ink);font-weight:700}
+.legend{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--muted);
+ display:flex;gap:16px;flex-wrap:wrap;margin-top:2px}
+.sw{display:inline-block;width:16px;height:2px;vertical-align:middle;margin-right:5px}
+
+.scroll{overflow-x:auto;margin:18px 0}
+table{width:100%;border-collapse:collapse;font-size:14px;
+ font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+th{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);
+ text-align:left;padding:0 10px 7px;border-bottom:1.5px solid var(--ink);font-weight:600}
+td{padding:9px 10px;border-bottom:1px solid var(--rule);vertical-align:top;
+ text-align:left}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.lead{font-weight:600;white-space:nowrap}
+td.note{font-family:Georgia,serif;font-size:14.5px;color:var(--muted);line-height:1.5}
+.v{font-size:10.5px;font-weight:700;letter-spacing:.09em;padding:2px 7px;
+ border-radius:2px;white-space:nowrap;display:inline-block}
+.v.ship{color:var(--ship);border:1px solid var(--ship)}
+.v.kill{color:var(--kill);border:1px solid var(--kill)}
+.v.none{color:var(--muted);border:1px solid var(--rule2)}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
+ gap:1px;background:var(--rule);border:1px solid var(--rule);margin:22px 0}
+.stat{background:var(--paper);padding:14px 15px}
+.stat .k{font-family:"Avenir Next Condensed","Oswald",sans-serif;font-weight:700;
+ font-size:30px;line-height:1;font-variant-numeric:tabular-nums}
+.stat .l{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--muted);
+ margin-top:6px;line-height:1.4;text-transform:uppercase;letter-spacing:.06em}
+.good{color:var(--ship)}.bad{color:var(--kill)}.warn{color:var(--warn)}
+
+.correction{border-left:3px solid var(--kill);background:var(--surface);
+ padding:16px 20px;margin:22px 0;border-radius:0 3px 3px 0}
+.correction .lab{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;
+ letter-spacing:.14em;text-transform:uppercase;color:var(--kill);font-weight:700}
+.correction p{margin:7px 0 0;font-size:15.5px;line-height:1.6}
+.keybox{border:1px solid var(--rule);background:var(--surface);padding:16px 20px;
+ margin:22px 0;border-radius:3px}
+.keybox .lab{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;
+ letter-spacing:.14em;text-transform:uppercase;color:var(--sig);font-weight:700}
+.keybox p{margin:7px 0 0;font-size:15.5px;line-height:1.6}
+mark{background:var(--mark);color:inherit;padding:0 3px}
+code{font-size:13.5px;background:var(--surface);border:1px solid var(--rule);
+ padding:1px 5px;border-radius:3px}
+pre{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+ padding:14px 16px;overflow-x:auto;font-size:13px;line-height:1.5;margin:16px 0}
+pre code{background:none;border:none;padding:0}
+.round{display:flex;gap:14px;align-items:baseline;margin:44px 0 4px;
+ padding-top:16px;border-top:1px solid var(--rule)}
+.round .rn{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);
+ border:1px solid var(--rule2);border-radius:2px;padding:2px 7px;white-space:nowrap}
+.round h3{margin:0;font-size:22px;border:none;padding:0}
+footer{margin-top:64px;padding-top:20px;border-top:2px solid var(--ink);
+ font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--muted);
+ line-height:1.7}
+a{color:var(--sig)}
+
+.shot video,.shot img{width:100%;display:block;border-radius:2px}
+.srclink{display:inline-block;margin-top:14px;font-family:ui-monospace,Menlo,monospace;
+ font-size:13px;border:1px solid var(--rule2);border-radius:3px;padding:7px 13px;
+ color:var(--ink);text-decoration:none}
+.srclink:hover{border-color:var(--sig);color:var(--sig)}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+<div class="kicker">Field report &middot; Neuroevolution &middot; Python + NumPy</div>
+<h1>Teaching cars to drive by evolution &mdash; and learning to trust the results</h1>
+<p class="stand">A population of neural networks learns to race procedurally
+generated tracks with no gradients, no training data, and no human demonstration
+&mdash; only survival. This is the complete record: how it works, every
+experiment run, and the four separate occasions when the measurements lied and
+had to be caught.</p>
+<div class="byline mono">
+<span>15 gated experiments</span><span>3 shipped &middot; 12 killed</span>
+<span>123 tests</span><span>~40 commits</span><span>numpy + pygame, CPU only</span>
+</div>
+<a class="srclink" href="https://github.com/ChrisTelles152/RacingCars">View the source on GitHub &rarr;</a>
+</header>
+
+<p>Everything below was built from an empty directory. The end state is a driver
+that completes a 125-track held-out benchmark &mdash; including its hardest
+tier &mdash; <mark>without crashing once</mark>. The more interesting story is
+the path there, because roughly half the work was not making the cars better;
+it was discovering that measurements which <em>looked</em> convincing were
+wrong.</p>
+
+<div class="stats">
+<div class="stat"><div class="k good">0%</div><div class="l">crashes, frozen 125-track test bank</div></div>
+<div class="stat"><div class="k">242</div><div class="l">numbers in a driver's brain</div></div>
+<div class="stat"><div class="k">~1.5<span style="font-size:16px">ms</span></div><div class="l">to simulate 512 cars one step</div></div>
+<div class="stat"><div class="k bad">4</div><div class="l">times the measurements lied</div></div>
+</div>
+
+<h2><span class="n">01</span>What is actually being evolved</h2>
+<p class="dek">No gradients, no labelled data, no demonstrations. Just selection.</p>
+
+<p>Each car carries a tiny neural network &mdash; its brain. The network sees
+eleven distance readings from rays cast around the car, plus its own speed, and
+outputs two numbers: how hard to steer and how hard to accelerate. That is the
+entire interface between mind and world.</p>
+
+<p>The network is small enough to write down: twelve inputs, sixteen hidden
+units, two outputs. <strong>242 weights in total.</strong> Those 242 numbers,
+flattened into a single vector, are the car's genome. Five hundred and twelve
+of them form a population, stored as one matrix.</p>
+
+<p>Every generation, all 512 cars drive the same freshly generated tracks
+simultaneously. The ones that travel furthest become parents. Their genomes are
+recombined and perturbed with random noise to make the next generation. Repeat
+three hundred times. Nothing ever computes a derivative; the entire learning
+signal is <em>who got further</em>.</p>
+
+<div class="grid2">
+<figure class="shot"><video class="anim" autoplay loop muted playsinline preload="metadata" poster="media/gen0.jpg" aria-label="Generation 0 — 64 untrained brains. Half crash within seconds; the median car covers 0.019 laps."><source src="media/gen0.mp4" type="video/mp4"><img src="media/gen0.jpg" alt="Generation 0 — 64 untrained brains. Half crash within seconds; the median car covers 0.019 laps."></video><figcaption>Generation 0 — 64 untrained brains. Half crash within seconds; the median car covers 0.019 laps.</figcaption></figure>
+<figure class="shot"><video class="anim" autoplay loop muted playsinline preload="metadata" poster="media/champion.jpg" aria-label="After 300 generations — the champion on an unseen track at maximum difficulty. 7.98 laps, no contact."><source src="media/champion.mp4" type="video/mp4"><img src="media/champion.jpg" alt="After 300 generations — the champion on an unseen track at maximum difficulty. 7.98 laps, no contact."></video><figcaption>After 300 generations — the champion on an unseen track at maximum difficulty. 7.98 laps, no contact.</figcaption></figure>
+</div>
+
+<div class="keybox"><div class="lab">The core idea</div>
+<p>Evolution here is doing something backpropagation cannot: optimising through
+a simulator that is full of hard discontinuities &mdash; crashes, wall contact,
+episode termination. None of it is differentiable. Selection does not care.</p></div>
+
+<h2><span class="n">02</span>Under the hood</h2>
+<p class="dek">The five components, and the engineering decision inside each one.</p>
+
+<h3>Procedurally generated tracks</h3>
+<p>Every track is built from a seed: scatter control points around a circle at
+jittered angles and radii, run a <strong>closed Catmull-Rom spline</strong>
+through them (a curve that passes exactly through each point rather than merely
+approaching it), then resample the result to 400 points spaced equally by arc
+length. That resampling matters twice over &mdash; raw spline samples bunch up
+in tight corners, and equal spacing turns "how far along the track am I?" into
+a simple array index.</p>
+
+<p>Candidate tracks are then <em>rejected</em> if a corner is too tight for the
+corridor width, if two sections pinch together, or if the geometry runs off the
+world. Invalid seeds re-roll. This is rejection sampling, and it is what lets a
+difficulty knob crank up corner sharpness without silently producing
+undrivable tracks.</p>
+
+<p>Finally the corridor is stamped into two boolean grids: one representing
+walls as the sensors see them, and one <em>inflated by the car's radius</em>.
+That second grid is a small piece of robotics: testing the car's centre point
+against an inflated obstacle is mathematically identical to testing the car's
+whole body against the real one &mdash; collision detection collapses to a
+single array lookup.</p>
+
+<h3>What a car can sense</h3>
+<p>Rays could be intersected against wall segments analytically. Instead each
+ray marches a fixed number of sample points through the occupancy grid and takes
+the first one that lands in a wall. This was roughly <strong>ten times
+faster</strong> when measured, and its cost is independent of how complicated
+the track shape is.</p>
+
+<div class="keybox"><div class="lab">Deliberate poverty</div>
+<p>The car never receives its coordinates, the track layout, or a map. It sees
+only local wall distances and its own speed. That poverty is the whole point: a
+brain with no track-specific information available to it has nothing
+track-specific to memorise, so the only strategy that scores well is
+<em>general</em> driving.</p></div>
+
+<h3>The brain, and vectorising across models</h3>
+<p>The standard way to use a GPU or SIMD unit is to run one model over many data
+points. Here the situation is inverted: 512 <em>different</em> networks each
+need to process their own single observation. The trick is to store all
+populations' weights as one stacked tensor and contract it with a matched batch
+of observations:</p>
+
+<pre><code>h   = tanh(einsum('pi,pih-&gt;ph', obs, W1) + b1)
+out = tanh(einsum('ph,pho-&gt;po', h,  W2) + b2)</code></pre>
+
+<p>Two lines evaluate 512 distinct neural networks simultaneously. Combined with
+storing car state as parallel arrays rather than objects, the whole population
+advances one timestep in about <strong>1.5&nbsp;milliseconds</strong>.</p>
+
+<p>A later optimisation only computed sensing and thinking for cars still alive
+&mdash; early generations are dominated by wrecks &mdash; which made training
+<strong>3.1&times; faster</strong> while producing bit-identical results, a
+property pinned by a test.</p>
+
+<h3>The genetic algorithm</h3>
+<p>Four operators, each a deliberate choice. <strong>Elitism</strong> copies the
+best few genomes untouched, so a good solution can never be lost to an unlucky
+mutation. <strong>Tournament selection</strong> picks each parent as the best of
+three randomly drawn candidates &mdash; only rank matters, never the magnitude
+of fitness, and weak genomes still occasionally reproduce, which preserves
+diversity. <strong>Uniform crossover</strong> mixes two parents gene by gene.
+<strong>Gaussian mutation</strong> perturbs about 10% of genes, with the noise
+scale annealing over time: coarse exploration early, fine tuning late.</p>
+
+<p>Crossover of neural network weights is genuinely contested in the literature
+&mdash; two parents can encode identical behaviour with permuted hidden neurons,
+making their blend meaningless. It was left as a configurable knob rather than
+asserted to be correct.</p>
+
+<h2><span class="n">03</span>Fitness design, or: how optimisers cheat</h2>
+<p class="dek">Every one of these exploits appeared or was anticipated. An
+optimiser does exactly what you write, never what you meant.</p>
+
+<div class="scroll"><table>
+<tr><th>The exploit</th><th>The defence</th></tr>
+<tr><td class="lead">Drive backwards over the start line repeatedly</td><td class="note">No reverse gear exists in the physics; speed clips at zero. Backward progress counts negative.</td></tr>
+<tr><td class="lead">Oscillate back and forth across the line</td><td class="note">Progress is monotone-maximum &mdash; only the furthest point ever reached counts &mdash; and lap crossings are signed.</td></tr>
+<tr><td class="lead">Creep forward at 1&nbsp;px/s forever</td><td class="note">A stagnation rule freezes any car that fails to gain ground over a rolling window.</td></tr>
+<tr><td class="lead">Cut across the infield</td><td class="note">Progress is only searched in a small window around the car's last known checkpoint, so it cannot teleport across a nearby fold of track.</td></tr>
+<tr><td class="lead">Spin in tight circles to farm distance</td><td class="note">Circling gains no <em>net</em> centreline progress, so the stagnation rule collects it.</td></tr>
+<tr><td class="lead">Drive recklessly fast and crash late</td><td class="note">Measured, not assumed: crashing forfeits the remainder of the episode, worth ~5.4 laps on average. The explicit penalty is almost irrelevant.</td></tr>
+</table></div>
+
+<p>There is deliberately <em>no</em> explicit speed bonus. Faster cars simply
+get further before the step limit, so speed is rewarded without ever being
+directly payable &mdash; a reward that cannot be farmed.</p>
+
+<h2><span class="n">04</span>Making it generalise</h2>
+<p class="dek">The difference between a car that memorised a track and a driver.</p>
+
+<p>Three mechanisms, all structural rather than incidental:</p>
+
+<p><strong>Fresh tracks, every generation.</strong> No genome is ever scored twice
+on the same track. Memorisation is not a strategy that exists in this
+environment; generalising <em>is</em> the objective function.</p>
+
+<p><strong>An adaptive curriculum.</strong> Tracks begin wide and gentle. When
+the <em>median</em> car (not the best &mdash; one lucky elite must not drag the
+population somewhere it cannot survive) handles the current difficulty for
+several generations running, the tracks get narrower and twistier. Difficulty is
+sampled from a trailing band so easy tracks stay in the mix and skills are not
+forgotten.</p>
+
+<p><strong>A three-way data split</strong>, borrowed wholesale from supervised
+learning: training tracks drive evolution, a validation ladder selects
+champions, and a frozen test bank is read only to report a final number. This
+turned out to matter more than any modelling decision in the entire project.</p>
+
+<figure>
+<div class="legend"><span><span class="sw" style="background:var(--ink)"></span>best car</span>
+<span><span class="sw" style="background:var(--muted)"></span>median car</span>
+<span><span class="sw" style="background:var(--sig);height:6px;width:6px;border-radius:50%"></span>held-out validation</span>
+<span><span class="sw" style="background:var(--rule2)"></span>curriculum difficulty</span></div>
+<svg viewBox="0 0 720 260" class="chart" role="img"
+ aria-label="Learning curve: best and median fitness over 300 generations">
+<line x1="44" y1="230.0" x2="706" y2="230.0" stroke="var(--rule)" stroke-width="1"/><text x="36" y="234.0" text-anchor="end" class="ax">0</text><line x1="44" y1="176.5" x2="706" y2="176.5" stroke="var(--rule)" stroke-width="1"/><text x="36" y="180.5" text-anchor="end" class="ax">3</text><line x1="44" y1="123.0" x2="706" y2="123.0" stroke="var(--rule)" stroke-width="1"/><text x="36" y="127.0" text-anchor="end" class="ax">6</text><line x1="44" y1="69.5" x2="706" y2="69.5" stroke="var(--rule)" stroke-width="1"/><text x="36" y="73.5" text-anchor="end" class="ax">9</text><line x1="44" y1="16.0" x2="706" y2="16.0" stroke="var(--rule)" stroke-width="1"/><text x="36" y="20.0" text-anchor="end" class="ax">12</text><text x="44.0" y="252" text-anchor="middle" class="ax">0</text><text x="265.4" y="252" text-anchor="middle" class="ax">100</text><text x="486.8" y="252" text-anchor="middle" class="ax">200</text><text x="706.0" y="252" text-anchor="middle" class="ax">299</text>
+<polyline points="44.0,230.0 46.2,230.0 48.4,230.0 50.6,230.0 52.9,230.0 55.1,230.0 57.3,230.0 59.5,230.0 61.7,230.0 63.9,230.0 66.1,230.0 68.4,230.0 70.6,230.0 72.8,230.0 75.0,230.0 77.2,230.0 79.4,230.0 81.6,230.0 83.9,230.0 86.1,230.0 88.3,223.4 90.5,221.6 92.7,221.6 94.9,219.5 97.1,219.8 99.4,201.9 101.6,206.1 103.8,193.9 106.0,206.3 108.2,202.5 110.4,189.7 112.6,180.3 114.8,186.7 117.1,164.8 119.3,151.8 121.5,169.9 123.7,147.9 125.9,156.7 128.1,142.4 130.3,126.5 132.6,132.5 134.8,145.1 137.0,108.3 139.2,117.7 141.4,121.8 143.6,91.7 145.8,100.1 148.1,93.5 150.3,96.8 152.5,87.1 154.7,77.6 156.9,87.1 159.1,64.6 161.3,65.1 163.6,64.6 165.8,57.8 168.0,59.5 170.2,70.5 172.4,65.2 174.6,67.5 176.8,66.9 179.1,64.6 181.3,76.1 183.5,58.6 185.7,58.3 187.9,70.8 190.1,58.5 192.3,70.5 194.6,59.5 196.8,61.4 199.0,62.4 201.2,62.6 203.4,55.8 205.6,53.4 207.8,44.8 210.1,29.7 212.3,41.4 214.5,28.8 216.7,30.3 218.9,34.6 221.1,25.9 223.3,30.2 225.6,26.7 227.8,31.8 230.0,27.7 232.2,30.3 234.4,27.7 236.6,39.2 238.8,27.4 241.1,24.9 243.3,32.1 245.5,42.8 247.7,40.0 249.9,28.2 252.1,27.4 254.3,33.6 256.5,24.4 258.8,34.4 261.0,35.1 263.2,28.8 265.4,27.9 267.6,25.1 269.8,29.3 272.0,29.3 274.3,30.5 276.5,34.3 278.7,20.9 280.9,37.7 283.1,29.2 285.3,20.9 287.5,37.2 289.8,34.9 292.0,32.6 294.2,33.9 296.4,33.1 298.6,38.2 300.8,31.1 303.0,31.3 305.3,27.2 307.5,29.5 309.7,32.0 311.9,29.5 314.1,41.4 316.3,30.7 318.5,32.1 320.8,35.8 323.0,40.0 325.2,33.9 327.4,30.3 329.6,29.0 331.8,23.6 334.0,33.9 336.3,31.0 338.5,27.4 340.7,28.3 342.9,33.8 345.1,39.4 347.3,34.6 349.5,27.9 351.8,30.2 354.0,22.7 356.2,23.9 358.4,22.9 360.6,22.1 362.8,34.3 365.0,29.5 367.3,31.6 369.5,39.4 371.7,36.6 373.9,28.5 376.1,34.8 378.3,30.2 380.5,24.4 382.7,35.8 385.0,24.1 387.2,38.1 389.4,38.2 391.6,24.7 393.8,30.2 396.0,30.5 398.2,19.5 400.5,31.3 402.7,30.0 404.9,37.2 407.1,33.0 409.3,33.3 411.5,29.3 413.7,41.7 416.0,35.1 418.2,43.8 420.4,34.9 422.6,19.5 424.8,33.6 427.0,37.1 429.2,33.6 431.5,23.4 433.7,41.2 435.9,33.8 438.1,33.8 440.3,33.1 442.5,35.3 444.7,21.8 447.0,35.9 449.2,27.9 451.4,33.0 453.6,42.0 455.8,28.3 458.0,29.3 460.2,36.9 462.5,21.1 464.7,27.9 466.9,29.5 469.1,30.7 471.3,42.8 473.5,28.0 475.7,26.7 478.0,35.3 480.2,26.4 482.4,23.6 484.6,34.8 486.8,38.4 489.0,31.3 491.2,28.8 493.5,41.2 495.7,37.7 497.9,27.9 500.1,31.1 502.3,25.7 504.5,28.7 506.7,32.1 508.9,45.6 511.2,32.1 513.4,27.9 515.6,31.5 517.8,31.8 520.0,28.5 522.2,25.4 524.4,25.4 526.7,41.7 528.9,34.6 531.1,36.4 533.3,38.6 535.5,31.8 537.7,35.1 539.9,36.1 542.2,34.3 544.4,26.4 546.6,20.9 548.8,28.8 551.0,22.6 553.2,42.5 555.4,31.8 557.7,32.1 559.9,39.7 562.1,28.5 564.3,33.8 566.5,28.7 568.7,37.7 570.9,25.7 573.2,21.9 575.4,28.3 577.6,36.6 579.8,32.6 582.0,29.0 584.2,34.6 586.4,29.5 588.7,38.2 590.9,39.0 593.1,32.5 595.3,35.3 597.5,41.0 599.7,21.9 601.9,19.0 604.2,38.9 606.4,34.4 608.6,21.6 610.8,30.7 613.0,31.3 615.2,31.5 617.4,43.8 619.7,31.1 621.9,40.0 624.1,26.0 626.3,33.8 628.5,33.1 630.7,33.4 632.9,27.0 635.2,35.9 637.4,31.5 639.6,29.2 641.8,34.3 644.0,34.9 646.2,28.5 648.4,33.3 650.6,31.3 652.9,30.7 655.1,42.8 657.3,39.9 659.5,44.0 661.7,30.8 663.9,25.5 666.1,28.2 668.4,27.0 670.6,27.2 672.8,20.0 675.0,21.1 677.2,29.5 679.4,36.6 681.6,27.9 683.9,30.0 686.1,30.3 688.3,34.8 690.5,22.7 692.7,27.4 694.9,28.8 697.1,33.4 699.4,38.1 701.6,36.7 703.8,33.9 706.0,46.1" fill="none" stroke="var(--rule2)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<polyline points="44.0,230.0 46.2,229.8 48.4,229.7 50.6,229.6 52.9,229.4 55.1,229.3 57.3,229.3 59.5,229.2 61.7,229.2 63.9,228.4 66.1,228.6 68.4,228.3 70.6,227.7 72.8,227.2 75.0,227.1 77.2,222.2 79.4,220.6 81.6,182.9 83.9,213.7 86.1,131.0 88.3,226.0 90.5,135.0 92.7,126.1 94.9,86.5 97.1,71.5 99.4,151.0 101.6,63.3 103.8,106.6 106.0,61.0 108.2,67.2 110.4,64.0 112.6,86.1 114.8,59.5 117.1,166.6 119.3,137.9 121.5,53.4 123.7,105.1 125.9,67.3 128.1,169.4 130.3,138.7 132.6,78.6 134.8,63.9 137.0,151.6 139.2,71.9 141.4,115.6 143.6,225.6 145.8,148.9 148.1,194.0 150.3,104.5 152.5,215.5 154.7,156.8 156.9,148.5 159.1,226.3 161.3,224.8 163.6,226.3 165.8,221.0 168.0,219.2 170.2,219.3 172.4,153.3 174.6,223.7 176.8,220.0 179.1,218.5 181.3,209.3 183.5,222.8 185.7,173.6 187.9,156.7 190.1,227.3 192.3,226.8 194.6,222.4 196.8,194.4 199.0,214.5 201.2,165.5 203.4,169.1 205.6,162.2 207.8,199.9 210.1,149.5 212.3,194.6 214.5,173.0 216.7,213.2 218.9,165.6 221.1,208.0 223.3,171.7 225.6,219.0 227.8,175.8 230.0,166.4 232.2,181.9 234.4,179.5 236.6,158.5 238.8,210.0 241.1,181.0 243.3,132.4 245.5,169.2 247.7,151.3 249.9,165.7 252.1,214.6 254.3,151.8 256.5,151.1 258.8,170.2 261.0,164.4 263.2,138.3 265.4,160.3 267.6,172.3 269.8,169.0 272.0,176.5 274.3,144.2 276.5,126.6 278.7,172.4 280.9,133.2 283.1,143.2 285.3,154.1 287.5,161.0 289.8,114.7 292.0,164.7 294.2,125.2 296.4,146.0 298.6,139.8 300.8,174.1 303.0,159.1 305.3,162.0 307.5,141.3 309.7,127.2 311.9,166.7 314.1,157.5 316.3,138.9 318.5,136.3 320.8,151.6 323.0,178.7 325.2,150.6 327.4,153.9 329.6,131.1 331.8,141.4 334.0,157.1 336.3,166.2 338.5,135.6 340.7,137.1 342.9,144.2 345.1,107.7 347.3,150.5 349.5,125.1 351.8,134.5 354.0,156.6 356.2,119.4 358.4,172.0 360.6,121.5 362.8,169.2 365.0,146.4 367.3,110.8 369.5,158.8 371.7,135.1 373.9,112.0 376.1,132.0 378.3,166.0 380.5,119.8 382.7,117.0 385.0,106.0 387.2,142.2 389.4,129.5 391.6,116.1 393.8,158.4 396.0,152.0 398.2,143.6 400.5,127.5 402.7,114.3 404.9,98.3 407.1,180.6 409.3,165.7 411.5,106.8 413.7,96.2 416.0,160.9 418.2,154.8 420.4,128.1 422.6,137.1 424.8,127.7 427.0,118.4 429.2,114.5 431.5,152.6 433.7,120.1 435.9,159.3 438.1,108.9 440.3,106.3 442.5,154.6 444.7,165.9 447.0,130.9 449.2,119.1 451.4,118.9 453.6,122.3 455.8,108.0 458.0,169.6 460.2,121.7 462.5,142.3 464.7,167.0 466.9,110.7 469.1,118.1 471.3,199.8 473.5,122.1 475.7,159.8 478.0,157.9 480.2,158.3 482.4,164.8 484.6,126.4 486.8,108.2 489.0,116.2 491.2,128.8 493.5,95.2 495.7,93.3 497.9,116.7 500.1,106.4 502.3,111.9 504.5,137.9 506.7,100.9 508.9,79.5 511.2,190.6 513.4,129.1 515.6,117.9 517.8,155.9 520.0,133.4 522.2,124.5 524.4,109.0 526.7,99.0 528.9,139.2 531.1,122.8 533.3,123.6 535.5,105.5 537.7,114.6 539.9,96.9 542.2,99.2 544.4,162.0 546.6,149.4 548.8,108.3 551.0,157.8 553.2,91.7 555.4,117.3 557.7,133.8 559.9,109.1 562.1,133.6 564.3,111.3 566.5,121.8 568.7,111.5 570.9,118.0 573.2,109.5 575.4,98.6 577.6,147.7 579.8,157.4 582.0,93.7 584.2,205.0 586.4,100.6 588.7,157.5 590.9,101.8 593.1,145.7 595.3,167.2 597.5,98.4 599.7,108.5 601.9,150.4 604.2,157.1 606.4,115.2 608.6,135.3 610.8,127.8 613.0,108.7 615.2,145.2 617.4,74.8 619.7,95.0 621.9,100.8 624.1,113.2 626.3,81.3 628.5,134.0 630.7,221.9 632.9,102.6 635.2,153.0 637.4,184.3 639.6,116.0 641.8,117.2 644.0,139.1 646.2,104.4 648.4,110.3 650.6,109.1 652.9,92.4 655.1,148.1 657.3,156.7 659.5,146.6 661.7,122.0 663.9,126.3 666.1,114.8 668.4,115.1 670.6,157.5 672.8,189.6 675.0,145.2 677.2,124.0 679.4,127.5 681.6,105.6 683.9,132.2 686.1,102.6 688.3,89.5 690.5,145.2 692.7,120.4 694.9,117.6 697.1,156.4 699.4,87.3 701.6,157.2 703.8,94.9 706.0,161.9" fill="none" stroke="var(--muted)" stroke-width="1.6"/>
+<polyline points="44.0,67.0 46.2,49.7 48.4,43.5 50.6,38.9 52.9,35.7 55.1,39.3 57.3,45.9 59.5,34.0 61.7,32.7 63.9,36.4 66.1,29.3 68.4,38.9 70.6,37.7 72.8,34.4 75.0,37.0 77.2,35.1 79.4,32.8 81.6,28.0 83.9,35.0 86.1,23.8 88.3,32.8 90.5,33.9 92.7,33.8 94.9,37.2 97.1,38.3 99.4,42.6 101.6,35.5 103.8,42.8 106.0,41.1 108.2,42.3 110.4,41.6 112.6,46.0 114.8,36.8 117.1,57.6 119.3,43.4 121.5,36.1 123.7,43.3 125.9,49.8 128.1,54.7 130.3,54.5 132.6,51.3 134.8,53.3 137.0,64.1 139.2,61.9 141.4,61.2 143.6,63.0 145.8,66.6 148.1,60.5 150.3,58.9 152.5,64.1 154.7,63.1 156.9,74.5 159.1,151.0 161.3,165.2 163.6,155.6 165.8,176.7 168.0,169.9 170.2,77.4 172.4,72.8 174.6,148.8 176.8,121.5 179.1,119.8 181.3,108.1 183.5,135.2 185.7,121.7 187.9,76.9 190.1,126.6 192.3,91.4 194.6,118.6 196.8,94.6 199.0,107.4 201.2,104.2 203.4,110.7 205.6,110.9 207.8,137.1 210.1,85.2 212.3,131.2 214.5,119.6 216.7,146.6 218.9,106.5 221.1,123.5 223.3,120.2 225.6,134.3 227.8,105.4 230.0,96.9 232.2,120.4 234.4,128.0 236.6,117.6 238.8,125.6 241.1,128.9 243.3,93.8 245.5,111.7 247.7,116.5 249.9,117.4 252.1,148.3 254.3,108.5 256.5,118.5 258.8,109.9 261.0,107.1 263.2,104.2 265.4,121.2 267.6,129.6 269.8,119.3 272.0,124.5 274.3,101.6 276.5,83.7 278.7,114.1 280.9,87.7 283.1,104.3 285.3,112.2 287.5,108.4 289.8,78.4 292.0,110.8 294.2,99.3 296.4,115.1 298.6,88.8 300.8,119.7 303.0,97.5 305.3,122.3 307.5,107.4 309.7,96.5 311.9,101.1 314.1,110.9 316.3,108.1 318.5,105.0 320.8,110.7 323.0,111.9 325.2,115.7 327.4,121.5 329.6,97.1 331.8,99.0 334.0,103.0 336.3,114.1 338.5,109.6 340.7,105.6 342.9,98.1 345.1,84.1 347.3,101.7 349.5,105.7 351.8,104.2 354.0,112.8 356.2,103.3 358.4,118.9 360.6,101.9 362.8,115.2 365.0,115.0 367.3,92.9 369.5,111.8 371.7,116.1 373.9,91.6 376.1,114.4 378.3,115.2 380.5,90.2 382.7,100.8 385.0,81.9 387.2,99.0 389.4,103.7 391.6,100.8 393.8,106.2 396.0,112.2 398.2,125.4 400.5,106.9 402.7,90.0 404.9,83.8 407.1,106.6 409.3,112.0 411.5,85.9 413.7,82.7 416.0,110.8 418.2,101.1 420.4,101.0 422.6,102.6 424.8,107.6 427.0,104.8 429.2,99.2 431.5,111.9 433.7,102.0 435.9,116.4 438.1,84.9 440.3,84.4 442.5,93.6 444.7,118.7 447.0,97.9 449.2,101.7 451.4,96.1 453.6,94.1 455.8,86.6 458.0,112.5 460.2,96.7 462.5,92.4 464.7,115.8 466.9,98.3 469.1,105.1 471.3,110.8 473.5,101.8 475.7,113.3 478.0,98.3 480.2,115.3 482.4,119.5 484.6,105.6 486.8,91.6 489.0,105.5 491.2,103.0 493.5,79.1 495.7,77.7 497.9,92.5 500.1,90.7 502.3,96.9 504.5,109.0 506.7,85.0 508.9,71.0 511.2,106.1 513.4,100.0 515.6,91.0 517.8,108.3 520.0,120.5 522.2,108.2 524.4,92.8 526.7,89.8 528.9,92.0 531.1,114.0 533.3,109.8 535.5,95.2 537.7,106.8 539.9,85.2 542.2,89.5 544.4,107.8 546.6,113.7 548.8,97.3 551.0,103.8 553.2,82.9 555.4,101.2 557.7,96.9 559.9,92.8 562.1,107.8 564.3,98.9 566.5,110.3 568.7,90.5 570.9,103.3 573.2,93.0 575.4,86.8 577.6,98.5 579.8,102.1 582.0,79.7 584.2,110.4 586.4,84.5 588.7,101.7 590.9,89.4 593.1,97.3 595.3,110.5 597.5,87.8 599.7,92.0 601.9,101.5 604.2,113.2 606.4,100.9 608.6,123.7 610.8,118.8 613.0,96.8 615.2,96.4 617.4,67.5 619.7,80.5 621.9,88.5 624.1,76.6 626.3,72.0 628.5,89.0 630.7,109.8 632.9,84.9 635.2,92.5 637.4,103.6 639.6,99.7 641.8,94.2 644.0,95.8 646.2,89.9 648.4,90.4 650.6,95.3 652.9,81.7 655.1,85.0 657.3,105.0 659.5,90.0 661.7,109.2 663.9,107.0 666.1,93.6 668.4,88.1 670.6,103.9 672.8,127.2 675.0,111.2 677.2,109.0 679.4,108.1 681.6,88.8 683.9,105.3 686.1,88.5 688.3,81.7 690.5,93.7 692.7,98.4 694.9,97.0 697.1,111.7 699.4,76.7 701.6,105.5 703.8,81.6 706.0,91.9" fill="none" stroke="var(--ink)" stroke-width="2"/>
+<circle cx="44.0" cy="187.6" r="2.6" fill="var(--sig)"/><circle cx="66.1" cy="190.2" r="2.6" fill="var(--sig)"/><circle cx="88.3" cy="195.5" r="2.6" fill="var(--sig)"/><circle cx="110.4" cy="168.1" r="2.6" fill="var(--sig)"/><circle cx="132.6" cy="119.3" r="2.6" fill="var(--sig)"/><circle cx="154.7" cy="93.4" r="2.6" fill="var(--sig)"/><circle cx="176.8" cy="118.0" r="2.6" fill="var(--sig)"/><circle cx="199.0" cy="82.2" r="2.6" fill="var(--sig)"/><circle cx="221.1" cy="84.3" r="2.6" fill="var(--sig)"/><circle cx="243.3" cy="86.8" r="2.6" fill="var(--sig)"/><circle cx="265.4" cy="75.5" r="2.6" fill="var(--sig)"/><circle cx="287.5" cy="72.0" r="2.6" fill="var(--sig)"/><circle cx="309.7" cy="72.8" r="2.6" fill="var(--sig)"/><circle cx="331.8" cy="72.3" r="2.6" fill="var(--sig)"/><circle cx="354.0" cy="73.5" r="2.6" fill="var(--sig)"/><circle cx="376.1" cy="74.0" r="2.6" fill="var(--sig)"/><circle cx="398.2" cy="72.3" r="2.6" fill="var(--sig)"/><circle cx="420.4" cy="72.3" r="2.6" fill="var(--sig)"/><circle cx="442.5" cy="72.4" r="2.6" fill="var(--sig)"/><circle cx="464.7" cy="71.9" r="2.6" fill="var(--sig)"/><circle cx="486.8" cy="70.7" r="2.6" fill="var(--sig)"/><circle cx="508.9" cy="79.1" r="2.6" fill="var(--sig)"/><circle cx="531.1" cy="70.8" r="2.6" fill="var(--sig)"/><circle cx="553.2" cy="76.7" r="2.6" fill="var(--sig)"/><circle cx="575.4" cy="76.3" r="2.6" fill="var(--sig)"/><circle cx="597.5" cy="68.4" r="2.6" fill="var(--sig)"/><circle cx="619.7" cy="73.6" r="2.6" fill="var(--sig)"/><circle cx="641.8" cy="71.5" r="2.6" fill="var(--sig)"/><circle cx="663.9" cy="68.7" r="2.6" fill="var(--sig)"/><circle cx="686.1" cy="70.7" r="2.6" fill="var(--sig)"/><circle cx="706.0" cy="67.7" r="2.6" fill="var(--sig)"/>
+<text x="36" y="12" text-anchor="end" class="ax">laps</text></svg>
+<figcaption>A real 300-generation run. The median car (grey) chases the best
+(black) and repeatedly falls back &mdash; each collapse is the curriculum
+raising difficulty, and each recovery is the population adapting to it.</figcaption>
+</figure>
+
+<h2><span class="n">05</span>The method that made the results trustworthy</h2>
+<p class="dek">Built after the first result turned out to be an illusion.</p>
+
+<p><strong>Paired experiments.</strong> Every A/B runs both arms on identical
+random seeds, so replicate <em>i</em> of the treatment sees exactly the same
+sequence of training tracks as replicate <em>i</em> of the control. The
+comparison is then a paired one-sided t-test on per-seed differences, which
+cancels the run-to-run variance that would otherwise drown any real effect.</p>
+
+<p><strong>A decision suite separate from the test bank.</strong> A 300-track
+suite gates every ship-or-kill decision. The frozen 125-track bank is read once
+per milestone and <em>never</em> used to choose between options &mdash; because
+any set you select on, you eventually overfit.</p>
+
+<p><strong>Capacity controls.</strong> When adding a new input to the network,
+the genome grows. Does a win come from the new <em>information</em>, or merely
+from having more parameters? The answer requires a third arm: same enlarged
+genome, but the extra inputs carry duplicated data and no new information. This
+design caught a result that would otherwise have been misattributed.</p>
+
+<p><strong>Adversarial review.</strong> Each significant change was reviewed by
+independent automated critics whose findings were then cross-examined by further
+skeptics instructed to <em>refute</em> them. Four real bugs were caught this
+way, three of them while training runs were already in flight.</p>
+
+<h2><span class="n">06</span>The journey, round by round</h2>
+<p class="dek">Each round's measurement determined what the next one attempted.</p>
+
+<div class="round"><span class="rn">ROUND 1</span><h3>A champion that was not one</h3></div>
+<p>The first trained driver looked excellent: 9.6 laps on the validation set. The
+frozen test bank told a different story &mdash; it crashed on
+<strong>92% of maximum-difficulty tracks</strong>. The validation number was not
+wrong, it was simply not the number that mattered. This is the exact reason the
+three-way split exists, learned by walking into it.</p>
+
+<div class="round"><span class="rn">ROUND 2</span><h3>Perception, and a physics calculation</h3></div>
+<p>Rather than guess, the braking distance was computed: decelerating from top
+speed to what a tight corner permits consumes about 125&nbsp;px, while the
+sensors only reached 160&nbsp;px. The car physically could not see far enough to
+brake in time. Rays were lengthened and the forward fan densified. Difficulty
+was also pushed <em>past</em> the evaluation point during training, so that
+maximum difficulty became interpolation rather than extrapolation.
+<strong>92% &rarr; 8%.</strong></p>
+
+<div class="round"><span class="rn">ROUND 3</span><h3>The validation lottery</h3></div>
+<p>Running three independent seeds instead of one exposed something alarming.
+The validation ladder held only two maximum-difficulty tracks, so a fragile car
+that got lucky on both could win the checkpoint. Every seed had locked in a
+champion with a true crash rate of 42&ndash;65% wearing a perfect validation
+record.</p>
+
+<div class="keybox"><div class="lab">Result</div>
+<p>Fixing <em>selection alone</em> &mdash; no change whatsoever to the learning
+algorithm &mdash; moved the method from 52% crashes to 4%. The single largest
+improvement in the project came from measuring better, not training better.</p></div>
+
+<div class="round"><span class="rn">ROUND 4</span><h3>Diagnosis before treatment</h3></div>
+<p>A failure heat-map decomposed difficulty into two independent axes, corridor
+narrowness and corner sharpness, and showed the remaining crashes lived almost
+entirely on the <em>narrowness</em> axis. The obvious fix &mdash; a bigger brain,
+more sensor channels &mdash; was not what the data asked for.</p>
+<p>Instead the side rays were <em>shortened</em>. A ray that marches the same
+number of samples over a shorter distance resolves finer detail, dropping lateral
+measurement error from 4.4&nbsp;px to 1.9&nbsp;px against a corridor margin of
+roughly 12&nbsp;px. Zero new parameters, zero extra compute, a one-line config
+change. <strong>4% &rarr; 1.8%.</strong></p>
+
+<div class="round"><span class="rn">ROUND 5</span><h3>A wider world</h3></div>
+<p>Training tracks gained corridors that pinch and widen along their length.
+Measured first: the existing champion crashed on 32% of variable-width tracks,
+so the capability gap was real and worth closing. After training on them, 1.3%
+&mdash; and the frozen test bank came back <strong>clean at every difficulty,
+zero crashes</strong>. An unexpected bonus: the margin-keeping learned from
+variable width transferred, unprompted, to low-grip ice the cars had never
+encountered.</p>
+
+<div class="round"><span class="rn">ROUND 6</span><h3>Nine ideas that did not work</h3></div>
+<p>Recurrent memory, self-adaptive mutation rates, physics randomisation, island
+populations, champion ensembling, evolution-strategy fine-tuning, multi-car
+racing, low-grip training, obstacle training. Every one properly run, every one
+killed. Each is in the ledger below with the reason.</p>
+
+<div class="round"><span class="rn">ROUND 7</span><h3>The blind spot</h3></div>
+<p>One weakness resisted everything: cones placed mid-corridor caused crashes on
+97% of tracks. The cause was <em>angular aliasing</em> &mdash; a 12&nbsp;px cone
+slips between rays spaced 4&ndash;6&deg; apart, so beyond about 120&nbsp;px it is
+literally invisible. This was verified directly: a cone at 7&deg; and 130&nbsp;px
+returned <em>zero</em> ray hits.</p>
+<p>Densifying the fan helped (97% &rarr; 64%) but could not finish the job. What
+did was changing the <em>kind</em> of sensing: three channels reporting the
+nearest visible cone's true distance and bearing, independent of whether any ray
+happens to line up with it.</p>
+
+<div class="grid2">
+<figure class="shot"><video class="anim" autoplay loop muted playsinline preload="metadata" poster="media/cones_flagship.jpg" aria-label="The ray-only champion — 7.70 fast laps, then a cone it never detected."><source src="media/cones_flagship.mp4" type="video/mp4"><img src="media/cones_flagship.jpg" alt="The ray-only champion — 7.70 fast laps, then a cone it never detected."></video><figcaption>The ray-only champion — 7.70 fast laps, then a cone it never detected.</figcaption></figure>
+<figure class="shot"><video class="anim" autoplay loop muted playsinline preload="metadata" poster="media/cones_radar.jpg" aria-label="With bearing-based sensing — 6.28 careful laps, no contact."><source src="media/cones_radar.mp4" type="video/mp4"><img src="media/cones_radar.jpg" alt="With bearing-based sensing — 6.28 careful laps, no contact."></video><figcaption>With bearing-based sensing — 6.28 careful laps, no contact.</figcaption></figure>
+</div>
+
+<div class="keybox"><div class="lab">Why this one is satisfying</div>
+<p>The bearing-based driver uses <strong>fewer parameters</strong> than the
+dense-ray version it beat (290 versus 338). When a smaller model wins, the
+result cannot be attributed to capacity &mdash; the right representation simply
+beat more resolution, and the comparison proves it by construction.</p></div>
+
+<div class="round"><span class="rn">ROUND 8</span><h3>Chasing reliability, finding a frontier</h3></div>
+<p>The new sensing worked brilliantly on one random seed and poorly on another,
+which looked like a discovery lottery worth fixing. Five hypotheses were tested;
+all five died. The input was not dead (weight analysis). Selection was not
+missing good champions (every archived champion of the failing seed was
+re-scored &mdash; none existed). Crashing was not under-punished (measured).
+Training was not cut short (five seeds at double the generations: no
+improvement in solve rate). And capacity was not the limit &mdash; though that
+last one very nearly got away.</p>
+
+<h2><span class="n">07</span>When the measurements lied</h2>
+<p class="dek">Four separate incidents. This section exists because a showcase
+that omits them would be teaching the wrong lesson.</p>
+
+<div class="correction"><div class="lab">Correction 1 &middot; the invisible effect</div>
+<p>The first failure heat-map returned all zeros and looked like a solved
+problem. It was not: at ten tracks per cell, a champion with an 8% crash rate
+shows zero crashes in a cell <mark>43% of the time</mark>. The instrument had
+been designed for the 50&ndash;90% rates of an earlier era and could no longer
+see the effect it was pointed at. Re-run denser, the real structure appeared
+immediately.</p></div>
+
+<div class="correction"><div class="lab">Correction 2 &middot; the lucky champion</div>
+<p>A headline figure of "4% crashes" was published. It was one crash in
+twenty-five tracks. The <em>same genome</em> scored three in twenty-five on a
+fresh probe. Pooled over both, the honest figure is roughly 7&ndash;8% &mdash;
+the improvement was real and large, the precision was invented.</p></div>
+
+<div class="correction"><div class="lab">Correction 3 &middot; the breakthrough that was not</div>
+<p>Doubling the network's hidden layer appeared to be the answer: two of five
+seeds "solved" the cone problem at 8%, something no smaller network had ever
+managed. Re-measured on a four-times-larger probe, those same champions sit at
+11&ndash;13% &mdash; <em>worse</em> than the smaller network's 7%. The apparent
+breakthrough was produced entirely by the measuring instrument. A 25-track probe
+carries &plusmn;6 points of binomial noise; every effect being chased was the
+same size as the noise.</p></div>
+
+<div class="correction"><div class="lab">Correction 4 &middot; a plausible theory, killed by data</div>
+<p>The residual crashes suggested the fitness function was under-punishing
+collisions &mdash; the explicit penalty really is negligible. A fix was about to
+be written. Measuring first showed crashed episodes average 1.44 fitness against
+6.86 for clean ones: dying forfeits the rest of the episode, which is punishment
+enough. The theory was elegant, cheap to implement, and wrong.</p></div>
+
+<div class="keybox"><div class="lab">The pattern</div>
+<p>The same 25-track probe flipped conclusions <strong>twice, in opposite
+directions</strong> &mdash; inflating one champion and manufacturing an entire
+fake winning method. Small samples do not merely add noise; they generate
+confident, specific, wrong answers. All sub-20% comparisons now run on a
+100-track suite as a matter of policy.</p></div>
+
+<h2><span class="n">08</span>Bugs caught before they became results</h2>
+<p class="dek">Adversarial review, run concurrently with training.</p>
+
+<div class="scroll"><table>
+<tr><th>The bug</th><th>What it would have caused</th></tr>
+<tr><td class="lead">Champion-selection ratchet keyed on noise</td><td class="note">Caught mid-run: the saved "best" champion had already decayed from 4.77 laps to 0.23 while its selection score improved. The run was killed and restarted.</td></tr>
+<tr><td class="lead">A NumPy view aliasing bug</td><td class="note">Silently zeroed an entire new input channel in the fast path while the slow path computed it correctly &mdash; the feature would have looked deterministic and simply useless.</td></tr>
+<tr><td class="lead">Sensing straight through walls</td><td class="note">62% of the new sensor's readings were phantom obstacles on other folds of the track. Training on it would have taught blanket caution &mdash; the exact failure the sensor existed to avoid.</td></tr>
+<tr><td class="lead">Infinite recursion in track generation</td><td class="note">A difficulty back-off that could never terminate, plus non-atomic checkpoint writes that could destroy a champion on interrupt.</td></tr>
+</table></div>
+
+<h2><span class="n">09</span>The complete ledger</h2>
+<p class="dek">Fifteen experiments. Three shipped. Negative results are results.</p>
+
+<div class="scroll"><table>
+<tr><th>Experiment</th><th>Verdict</th><th>What it taught</th></tr>
+<tr><td class="lead">Precision side rays</td><td><span class="v ship">SHIP</span></td><td class="note">Sensor resolution must match the tolerance being judged. Halved hard-track crashes for zero parameters.</td></tr>
+<tr><td class="lead">Variable-width training</td><td><span class="v ship">SHIP</span></td><td class="note">Task diversity closed a 32%-crash capability hole, and transferred to hazards never trained on.</td></tr>
+<tr><td class="lead">Bearing-based obstacle sensing</td><td><span class="v ship">SHIP</span></td><td class="note">The right representation beat more resolution &mdash; with fewer parameters, so the win is unambiguous.</td></tr>
+<tr><td class="lead">Closure-rate inputs</td><td><span class="v kill">KILL</span></td><td class="note">More information made it worse. The capacity control proved the signal, not the parameter count, was at fault.</td></tr>
+<tr><td class="lead">Self-adaptive mutation</td><td><span class="v kill">KILL</span></td><td class="note">Sigma collapse: myopic selection anneals its own exploration away an order of magnitude too fast.</td></tr>
+<tr><td class="lead">Physics randomisation</td><td><span class="v kill">KILL</span></td><td class="note">A clean null. The failures were never physics-brittleness, and the data said so plainly.</td></tr>
+<tr><td class="lead">Low-grip training</td><td><span class="v kill">KILL</span></td><td class="note">Total ice mastery bought with a lap of <em>global</em> caution: invisible hazards get priced in everywhere.</td></tr>
+<tr><td class="lead">Recurrent memory</td><td><span class="v kill">KILL</span></td><td class="note">Memory was not the missing ingredient. Untargeted capacity rarely is.</td></tr>
+<tr><td class="lead">Obstacle training alone</td><td><span class="v kill">KILL</span></td><td class="note">Real progress, capability still unachieved, and 1.7 laps of collateral cost everywhere else.</td></tr>
+<tr><td class="lead">Island populations</td><td><span class="v kill">KILL</span></td><td class="note">The safest arm in the project and flat on capability. Diversity preserves; it does not create.</td></tr>
+<tr><td class="lead">Champion ensembling</td><td><span class="v kill">KILL</span></td><td class="note">Champions from the same distribution fail on the same tracks. Nothing to decorrelate.</td></tr>
+<tr><td class="lead">Evolution-strategy fine-tuning</td><td><span class="v kill">KILL</span></td><td class="note">A converged champion has nothing to gain from a noisy gradient estimate, only robustness to lose.</td></tr>
+<tr><td class="lead">Multi-car racing</td><td><span class="v kill">KILL</span></td><td class="note">Slower alone, but its champions sweep the podium when a race turns to carnage. Robustness versus pace, quantified.</td></tr>
+<tr><td class="lead">Doubled training time</td><td><span class="v kill">KILL</span></td><td class="note">Twice the generations, identical solve rate. Time was not the constraint.</td></tr>
+<tr><td class="lead">Doubled network capacity</td><td><span class="v kill">KILL</span></td><td class="note">Looked like the breakthrough until measured properly. See Correction 3.</td></tr>
+<tr><td class="lead">Hairpin traps</td><td><span class="v none">NO ARM</span></td><td class="note">Measured before building: the champion already handled them at 0% crash. No gap, no experiment, 80 minutes saved.</td></tr>
+</table></div>
+
+<h2><span class="n">10</span>Six lessons</h2>
+
+<p><strong>1. Measure where the failure is before deciding what to build.</strong>
+A heat-map pointed at corridor width, so the fix was shorter sensor rays &mdash;
+a config one-liner &mdash; rather than the bigger brain intuition suggested. On
+another occasion the measurement showed no gap at all and cancelled a planned
+experiment outright.</p>
+
+<p><strong>2. Any metric you select on, you will eventually overfit.</strong>
+Champion selection quietly optimised a validation set until fragile cars won.
+Separating decision-making data from reporting data was worth more than any
+architectural change.</p>
+
+<p><strong>3. Resolution must match effect size.</strong> Learned three times,
+twice the hard way. An instrument sized for 50% failure rates cannot adjudicate
+between 4% and 12%, and it will not fail loudly &mdash; it will return a
+confident wrong answer.</p>
+
+<p><strong>4. When adding capability, add a capacity control.</strong> Otherwise
+"the new input helped" and "the bigger network helped" are indistinguishable,
+and the wrong lesson gets learned and generalised.</p>
+
+<p><strong>5. Run replicates.</strong> One run is an anecdote. Three runs
+revealed that the entire method was performing far worse than any single run
+suggested &mdash; and made every subsequent comparison honest.</p>
+
+<p><strong>6. A well-measured negative result is a real deliverable.</strong>
+Twelve of fifteen experiments failed. Each one narrowed the space of things
+worth trying next, and several were more informative than the successes.</p>
+
+<h2><span class="n">11</span>Where it ended</h2>
+
+<figure><svg viewBox="0 0 700 180" class="chart" role="img" aria-label="Crash rate at maximum difficulty across five milestones"><rect x="188" y="8" width="430" height="19" rx="2" fill="var(--kill)"/><text x="180" y="22" text-anchor="end" class="axl">first champion</text><text x="626" y="22" class="axv">92%</text><rect x="188" y="42" width="37" height="19" rx="2" fill="var(--warn)"/><text x="180" y="56" text-anchor="end" class="axl">perception rebuild</text><text x="233" y="56" class="axv">8%</text><rect x="188" y="76" width="19" height="19" rx="2" fill="var(--warn)"/><text x="180" y="90" text-anchor="end" class="axl">fixed selection</text><text x="215" y="90" class="axv">4%</text><rect x="188" y="110" width="8" height="19" rx="2" fill="var(--ship)"/><text x="180" y="124" text-anchor="end" class="axl">precision rays</text><text x="204" y="124" class="axv">1.8%</text><rect x="188" y="144" width="2" height="19" rx="2" fill="var(--ship)"/><text x="180" y="158" text-anchor="end" class="axl">+ width training</text><text x="198" y="158" class="axv">0%</text></svg>
+<figcaption>Crash rate at maximum difficulty across five milestones. The largest
+single improvement came from fixing champion selection, not from changing how
+the cars learn.</figcaption></figure>
+
+<p>The final driver clears the frozen 125-track benchmark without a crash,
+handles corridors that pinch and widen, drives hairpin traps it was never
+trained on, and carries margin onto low-grip surfaces it has never seen. Its one
+documented weakness is mid-corridor obstacles, now reduced from 97% to roughly
+7&ndash;20% and characterised precisely: 83% of the remaining crashes are
+genuine contacts by cars that <em>can</em> see the obstacle, are paid to avoid
+it, and have both the time and the capacity to learn. That is a policy class at
+its limit, not a search problem.</p>
+
+<figure class="shot"><video class="anim" autoplay loop muted playsinline preload="metadata" poster="media/finale.jpg" aria-label="Six champions on one unseen track. Solo-trained drivers took four of five head-to-head races on pace; the traffic-trained ones swept the podium exactly once — on the track where five of six crashed."><source src="media/finale.mp4" type="video/mp4"><img src="media/finale.jpg" alt="Six champions on one unseen track. Solo-trained drivers took four of five head-to-head races on pace; the traffic-trained ones swept the podium exactly once — on the track where five of six crashed."></video><figcaption>Six champions on one unseen track. Solo-trained drivers took four of five head-to-head races on pace; the traffic-trained ones swept the podium exactly once — on the track where five of six crashed.</figcaption></figure>
+
+<p>The honest next step is not another parameter. The simulator's episode loop is
+already shaped like a standard reinforcement-learning environment, so the natural
+sequel is training a policy-gradient agent on the identical fitness function and
+racing the two approaches against each other &mdash; a genuine comparison of two
+optimiser families under one measurement regime. It also constitutes a decisive
+test of the frontier claim above: if a completely different optimiser plateaus in
+the same place, the conclusion is confirmed independently; if it does not, the
+conclusion was wrong.</p>
+
+<footer>
+Python 3.11 &middot; NumPy &middot; pygame &middot; no GPU, no deep-learning framework<br>
+123 tests &middot; ~40 commits &middot; every verdict from a paired one-sided
+t-test on shared seeds, gated on a 300-track decision suite<br><br>
+Reproduce the head-to-head race:<br>
+<code>python3 race.py --champions runs/width-*/champion_best_val.npz --track-seed 500005</code><br><br>
+Score a champion on the honest obstacle probe:<br>
+<code>python3 evaluate.py --suite obstacle_big runs/radar-101/champion_best_val.npz</code>
+</footer>
+</div>
+<script>
+// Respect reduced-motion: stop the looping clips and hand over manual controls.
+if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  document.querySelectorAll('video').forEach(function (v) {
+    v.removeAttribute('autoplay'); v.pause(); v.controls = true;
+  });
+}
+</script>
+</body>
+</html>
