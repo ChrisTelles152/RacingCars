@@ -10,6 +10,9 @@ get furthest become the parents of the next generation. Repeat for hundreds
 of generations, on **fresh, never-repeated tracks**, and out comes a driver
 that can race tracks it has never seen.
 
+**📄 [Read the full field report →](https://christelles152.github.io/RacingCars/)**
+— how it works, all 15 experiments, and the four times the measurements lied.
+
 ### Result
 
 The final driver completes a **frozen 125-track benchmark — including its
