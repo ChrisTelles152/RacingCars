@@ -1,13 +1,36 @@
 # RacingCars — Neuroevolution Racing Simulator
 
-Teach yourself how machine learning works by evolving neural-network drivers
-on procedurally generated race tracks.
+Neural-network drivers that learn to race procedurally generated tracks with
+**no gradients, no training data, and no human demonstration** — only
+selection. Pure Python + NumPy, CPU only, no deep-learning framework.
 
 A population of 512 identical cars — each with a *different* tiny neural
 network as its brain — drives simultaneously on a random track. The cars that
 get furthest become the parents of the next generation. Repeat for hundreds
 of generations, on **fresh, never-repeated tracks**, and out comes a driver
 that can race tracks it has never seen.
+
+### Result
+
+The final driver completes a **frozen 125-track benchmark — including its
+hardest tier — without crashing once**, having never seen any of those tracks
+during training. It also handles corridors that pinch and widen, hairpin
+traps it was never trained on, and carries margin onto low-grip surfaces it
+has never encountered.
+
+| Milestone | Crash rate at max difficulty |
+|---|---|
+| First trained champion | 92% |
+| Perception rebuild | 8% |
+| Fixed champion selection | 4% |
+| Precision side rays | 1.8% |
+| + variable-width training | **0%** |
+
+The largest single improvement came from fixing *how champions were selected*,
+not from changing how the cars learn. That, and eleven other findings, are in
+the [experiment ledger](#the-experiment-ledger-what-was-actually-tried) below —
+including the four separate occasions when a measurement turned out to be
+lying. `SESSION_LOG.md` has the condensed build record.
 
 ## Quick start
 
@@ -29,20 +52,26 @@ for tests/plots) — `pip install -r requirements.txt`.
 
 ### The task
 
-A car senses the world through **7 ray-distance sensors** (how far to the
-wall in 7 directions) plus its own speed — 8 numbers in total. Every timestep
-its brain must output 2 numbers: steering and throttle. That's the whole
-interface. No coordinates, no map, no track layout: a brain that only ever
-sees local wall distances has nothing track-specific to memorize, which is
-exactly what forces it to learn *general* driving.
+A car senses the world through **11 ray-distance sensors** (how far to the
+wall in 11 directions, dense and long-range toward the front) plus its own
+speed — 12 numbers in total. Every timestep its brain must output 2 numbers:
+steering and throttle. That's the whole interface. No coordinates, no map, no
+track layout: a brain that only ever sees local wall distances has nothing
+track-specific to memorize, which is exactly what forces it to learn
+*general* driving.
 
 ### The brain
 
-Each brain is a tiny multilayer perceptron, `8 → 16 → 2` with tanh
-activations — just **178 numbers** (weights and biases). The genome IS the
-network: those 178 floats flattened into a vector. The entire population is
-one `(512, 178)` matrix, and one generation of "thinking" for all 512
+Each brain is a tiny multilayer perceptron, `12 → 16 → 2` with tanh
+activations — just **242 numbers** (weights and biases). The genome IS the
+network: those 242 floats flattened into a vector. The entire population is
+one `(512, 242)` matrix, and one generation of "thinking" for all 512
 different brains is two `einsum` calls (see `racing/brain.py`).
+
+*(The project started at 7 rays and 178 parameters; the ray fan was widened
+and lengthened in the first perception rebuild — see the ledger below. Old
+checkpoints still load, because every `.npz` embeds the exact config it was
+trained with.)*
 
 ### The learning algorithm: a genetic algorithm
 
@@ -115,12 +144,12 @@ comes from three mechanisms in `train.py`:
 ### Why it's fast: vectorize across models, not just data
 
 There are no per-car Python objects. The population is a handful of arrays
-(`pos (512,2)`, `heading (512,)`, genome matrix `(512,178)`), and one
+(`pos (512,2)`, `heading (512,)`, genome matrix `(512,242)`), and one
 timestep for everyone is a fixed sequence of numpy array ops:
 
 - **Sensors**: instead of intersecting rays with wall segments, each track is
-  rasterized once into a boolean occupancy grid; a ray is 24 samples marched
-  through that grid. All 512×7 rays are one fancy-index gather.
+  rasterized once into a boolean occupancy grid; a ray is 36 samples marched
+  through that grid. All 512×11 rays are one fancy-index gather.
 - **Collision**: the grid is *inflated by the car's radius* (configuration
   space), so "did the car hit a wall" is a single array lookup at its center.
 - **Brains**: two einsums evaluate 512 different networks at once.
@@ -271,10 +300,9 @@ Three lessons close the investigation:
 - **The right representation beats more resolution** — 3 bearing channels
   with *fewer* parameters did what 6 extra rays could not. The win is
   attributable to information, not capacity, by construction.
-- **Discovery is a lottery.** One seed solved it, one mostly, one barely —
-  wiring a brand-new input into a working policy is an evolutionary
-  innovation that 300 generations finds sometimes, not always. (Reliable
-  discovery would need longer runs or an obstacle-first curriculum.)
+- **Discovery varies by seed.** One seed solved it, one mostly, one barely.
+  Round 4 below chased that variance and found it was not a search problem
+  at all.
 - **Not the flagship.** Radar champions pay ~1.2 laps of pace on clean
   tracks (guardrail: KILL for promotion), so `radar` stays the designated
   obstacle-world variant — different world, different tool. Notably,
@@ -341,7 +369,7 @@ gate with `compare.py`:
   converges faster and gets stuck more — find the crossover point.
 - **Population size vs generations**: 128 cars × 600 gens or 1024 × 75?
 - **Mutation schedule**: freeze `sigma_decay=1.0` — does it stop improving?
-- **Blind the car**: 3 rays instead of 7. Add rear rays. Widen the fan.
+- **Blind the car**: 5 rays instead of 11. Add rear rays. Widen the fan.
   (`--variant baseline` restores the pre-tuning long side rays to compare.)
 - **Bigger brain**: `hidden=64`. Better driver, or just slower evolution?
 - **No curriculum**: `--start-difficulty 1.0 --pin-difficulty`. Can evolution
@@ -351,14 +379,53 @@ gate with `compare.py`:
 - **Sanity mode**: `train.py --fixed-track-seed 7` trains on ONE track —
   watch it overfit gloriously, then check the champion on any other seed.
 
-## Stretch directions
+## The open thread: reinforcement learning
 
-The seams are already in place:
+**Status: designed, not built.** This is the one direction with real upside
+left, and it is deliberately parked rather than abandoned.
+
+Everything here is *neuroevolution*: a population of complete solutions,
+scored, selected, mutated. A genome drives ~2000 timesteps and receives
+exactly **one** number back — "8.7 laps". It never learns which steering
+decision was good; evolution just keeps whole brains that happened to score
+well. Reinforcement learning inverts that: a policy-gradient method computes a
+learning signal at **every timestep** ("that throttle input, in that
+situation, beat expectations — do more of it"), which is roughly 2000× more
+information extracted per episode. For scale, the GA here consumed on the
+order of 460,000 episodes (512 population × 300 generations × 3 tracks).
+
+Why this codebase is unusually ready for it:
+
+- `run_episode`'s sense → act → step loop is already gym-shaped.
+- The simulator already steps 512 independent cars in lockstep — PPO wants
+  many parallel environments, and that is normally the fiddly part.
+- The entire evaluation pipeline is **optimizer-agnostic**. A PPO policy is
+  just a mapping from observation to controls; `evaluate.py`, the decision
+  suite, and `compare.py` would score it exactly as they score a genome.
+
+What it would need: a gym-style wrapper, an actor-critic network (PyTorch),
+the PPO loop itself, and — the genuinely interesting design task — a
+**per-step reward** to replace terminal fitness. That last piece reopens
+every reward-hacking question in the table above, now at per-step
+granularity; expect to re-derive why monotone progress and the stall rule
+exist.
+
+Why it is worth doing beyond the algorithm itself: it is a **decisive test of
+this project's final claim**. The remaining obstacle weakness is argued to be
+a policy-class limit rather than a search limit. If a completely different
+optimizer, given the same sensors, plateaus in the same place, that confirms
+the conclusion independently. If it sails past, the conclusion was wrong.
+Either result is worth having.
+
+Honest costs: a heavy PyTorch dependency in a deliberately lightweight
+project, PPO's notorious hyperparameter sensitivity, and a real chance of
+producing a *worse* driver after considerable tuning.
+
+### Other seams left open
 
 - **NEAT** (evolving topology too): `simulation.py` only ever calls
   `forward(genomes, obs)` — swap in a new brain/evolution pair.
-- **Reinforcement learning**: `run_episode`'s sense → act → step loop is
-  gym-shaped; wrap it and train PPO on the same physics, then race the two
-  approaches.
 - **True multi-track parallelism**: the K tracks per generation are
   embarrassingly parallel (`multiprocessing`, one worker per track).
+- **Closing the obstacle gap**: the documented frontier. Not more rays — the
+  measured failure is genuine contacts by cars that already see the cone.
